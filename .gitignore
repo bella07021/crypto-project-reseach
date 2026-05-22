@@ -1,0 +1,14 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+
+node_modules/
+
+.cmc-chrome-profile/
+.rootdata-chrome-profile/
+
+output/*
+!output/rootdata_projects_x_enriched_fullv2.csv
+
+.vercel/
+*.log

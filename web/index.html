@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>加密项目调研评分</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app-frame">
+      <aside class="sidebar">
+        <div class="brand">
+          <strong>Crypto Research</strong>
+          <span id="healthStatus">Local</span>
+        </div>
+        <nav>
+          <button type="button" class="nav-item active" data-view="add">添加新项目</button>
+          <button type="button" class="nav-item" data-view="dashboard">Dashboard</button>
+        </nav>
+      </aside>
+
+      <section class="main-pane">
+        <header class="topbar">
+          <div>
+            <h1>加密项目调研评分</h1>
+            <p>输入 X 和 RootData 链接，生成评分、TGE 判断和路线图跟踪。</p>
+          </div>
+        </header>
+
+        <section class="view active" id="addView">
+          <form class="input-bar" id="scoreForm">
+            <label>
+              <span>X handle</span>
+              <input name="x_handle" placeholder="@NexusLabs" required />
+            </label>
+            <label>
+              <span>RootData 链接</span>
+              <input name="rootdata_url" placeholder="https://cn.rootdata.com/projects/detail/..." required />
+            </label>
+            <button type="submit" id="submitButton">开始评分</button>
+          </form>
+
+          <div id="reportMount"></div>
+        </section>
+
+        <section class="view" id="dashboardView">
+          <div class="dashboard-header">
+            <div>
+              <h2>Dashboard</h2>
+              <p>每个项目一行，点击 ticker 打开评分页。</p>
+            </div>
+            <button type="button" id="refreshDashboard">刷新</button>
+          </div>
+          <div class="dashboard-table-wrap">
+            <table class="dashboard-table">
+              <thead>
+                <tr>
+                  <th>Token</th>
+                  <th>总分</th>
+                  <th>团队</th>
+                  <th>融资</th>
+                  <th>社媒</th>
+                  <th>TGE</th>
+                  <th>路线图 / 上所信号</th>
+                </tr>
+              </thead>
+              <tbody id="dashboardRows">
+                <tr><td colspan="7">暂无项目。</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <template id="reportTemplate">
+      <section class="report-shell">
+        <section class="report-hero">
+          <div>
+            <span class="eyebrow">评分输出</span>
+            <h2 data-field="tokenTicker">--</h2>
+            <p data-field="projectMeta">--</p>
+          </div>
+          <div class="total-score">
+            <span data-field="totalScore">--</span>
+            <small>项目总分 / 100</small>
+          </div>
+        </section>
+
+        <section class="score-strip">
+          <article>
+            <span>团队分 <em>计入总分 30%</em></span>
+            <strong data-field="teamScore">--</strong>
+            <small data-field="teamReason">--</small>
+          </article>
+          <article>
+            <span>融资分 <em>计入总分 40%</em></span>
+            <strong data-field="fundingScore">--</strong>
+            <small data-field="fundingReason">--</small>
+          </article>
+          <article>
+            <span>社媒分 <em>计入总分 30%</em></span>
+            <strong data-field="socialScore">--</strong>
+            <small data-field="socialReason">--</small>
+          </article>
+        </section>
+
+        <section class="report-grid">
+          <article class="report-section">
+            <div class="section-title">
+              <h3>详细信息</h3>
+              <span data-field="fetchStatus">--</span>
+            </div>
+            <dl class="fact-grid two">
+              <div><dt>官网</dt><dd data-field="website">--</dd></div>
+              <div><dt>Excel</dt><dd data-field="workbook">--</dd></div>
+            </dl>
+            <ul data-field="evidenceList" class="clean-list"></ul>
+          </article>
+
+          <article class="report-section">
+            <div class="section-title">
+              <h3>TGE 情况</h3>
+              <span data-field="tgeStatus">--</span>
+            </div>
+            <div class="tge-card">
+              <strong data-field="tgeProbability">--</strong>
+              <small data-field="tgeDate">--</small>
+              <small data-field="tgeMethod">--</small>
+            </div>
+            <ul data-field="tgeEvidenceList" class="clean-list"></ul>
+          </article>
+
+          <article class="report-section wide">
+            <div class="section-title">
+              <h3>路线图 / 上所信号</h3>
+              <span>按时间排序</span>
+            </div>
+            <div data-field="roadmapList" class="timeline-list"></div>
+          </article>
+        </section>
+      </section>
+    </template>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
