@@ -7,5 +7,5 @@ if str(ROOT) not in sys.path:
 
 from web_app import CryptoScoringHandler
 
-handler = CryptoScoringHandler
-application = CryptoScoringHandler
+class handler(CryptoScoringHandler):
+    pass
