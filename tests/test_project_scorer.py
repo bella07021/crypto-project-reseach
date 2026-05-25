@@ -253,6 +253,22 @@ class ProjectScorerTests(unittest.TestCase):
         self.assertEqual(detail.fetch_status, "rootdata_incomplete")
         self.assertIn("RootData detail payload incomplete", detail.evidence_notes)
 
+    def test_fetch_live_project_detail_marks_rootdata_waf_challenge(self):
+        waf_html = """
+        <html><head>
+          <script id="CaptchaScript" src="https://sg.captcha.qcloud.com/Captcha.js"></script>
+        </head><body><form action="/WafCaptcha"></form></body></html>
+        """
+
+        with patch("live_project_fetcher.fetch_text", return_value=waf_html), patch(
+            "live_project_fetcher.fetch_text_with_curl",
+            return_value=waf_html,
+        ), patch("live_project_fetcher.fetch_text_with_browser", return_value=waf_html, create=True):
+            detail = fetch_live_project_detail("https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D", fetch_followers=False)
+
+        self.assertEqual(detail.fetch_status, "rootdata_waf_blocked")
+        self.assertIn("RootData WAF captcha blocked cloud fetch", detail.evidence_notes)
+
     def test_score_sheet_keeps_latest_row_per_project(self):
         rows = make_score_rows(
             [

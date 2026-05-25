@@ -532,6 +532,10 @@ def has_rootdata_detail_payload(detail: LiveProjectDetail) -> bool:
     )
 
 
+def has_rootdata_waf_challenge(html: str) -> bool:
+    return bool(re.search(r"sg\.captcha\.qcloud\.com|WafCaptcha|CaptchaScript", html, re.I))
+
+
 def fetch_x_followers(handle: str) -> tuple[Optional[int], str]:
     normalized = handle.strip().lstrip("@")
     if not normalized:
@@ -566,7 +570,9 @@ def fetch_live_project_detail(
 ) -> LiveProjectDetail:
     detail = LiveProjectDetail(fetch_status="rootdata_incomplete")
     errors: list[str] = []
+    saw_waf_challenge = False
     if rootdata_html.strip():
+        saw_waf_challenge = has_rootdata_waf_challenge(rootdata_html)
         detail = parse_rootdata_detail_html(rootdata_html)
         if has_rootdata_detail_payload(detail):
             detail.fetch_status = "ok"
@@ -582,10 +588,19 @@ def fetch_live_project_detail(
             except Exception as exc:
                 errors.append(f"{url}: {exc}")
                 continue
+        if has_rootdata_waf_challenge(html):
+            saw_waf_challenge = True
+            errors.append(f"{url}: RootData WAF captcha")
+            continue
         candidate = parse_rootdata_detail_html(html)
         if not has_rootdata_detail_payload(candidate):
             try:
-                candidate = parse_rootdata_detail_html(fetch_text_with_curl(url))
+                curl_html = fetch_text_with_curl(url)
+                if has_rootdata_waf_challenge(curl_html):
+                    saw_waf_challenge = True
+                    errors.append(f"{url}: RootData WAF captcha")
+                    continue
+                candidate = parse_rootdata_detail_html(curl_html)
             except Exception as exc:
                 errors.append(f"{url}: {exc}")
         if has_rootdata_detail_payload(candidate):
@@ -600,14 +615,23 @@ def fetch_live_project_detail(
         try:
             url = rootdata_fetch_urls(rootdata_url)[0]
             if os.environ.get("VERCEL"):
-                detail = parse_rootdata_detail_html(fetch_text_with_vercel_browser(url))
+                browser_html = fetch_text_with_vercel_browser(url)
             else:
-                detail = parse_rootdata_detail_html(fetch_text_with_browser(url))
+                browser_html = fetch_text_with_browser(url)
+            if has_rootdata_waf_challenge(browser_html):
+                saw_waf_challenge = True
+                errors.append("browser: RootData WAF captcha")
+            else:
+                detail = parse_rootdata_detail_html(browser_html)
         except Exception as exc:
             errors.append(f"browser: {exc}")
         if not has_rootdata_detail_payload(detail):
-            detail.fetch_status = "rootdata_incomplete"
-            detail.evidence_notes.append("RootData detail payload incomplete")
+            detail.fetch_status = "rootdata_waf_blocked" if saw_waf_challenge else "rootdata_incomplete"
+            detail.evidence_notes.append(
+                "RootData WAF captcha blocked cloud fetch"
+                if saw_waf_challenge
+                else "RootData detail payload incomplete"
+            )
             if errors:
                 detail.evidence_notes.append("RootData fetch errors: " + " | ".join(errors[-2:]))
         else:
