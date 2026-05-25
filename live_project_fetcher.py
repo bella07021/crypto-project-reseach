@@ -186,7 +186,6 @@ def fetch_text_with_vercel_browser(url: str) -> str:
     bypass_secret = os.environ.get("VERCEL_AUTOMATION_BYPASS_SECRET", "").strip()
     if bypass_secret:
         headers["x-vercel-protection-bypass"] = bypass_secret
-        headers["x-vercel-set-bypass-cookie"] = "true"
     request_url = f"{host.rstrip('/')}/api/rootdata-browser?{urlencode(params)}"
     return fetch_text(request_url, retries=1, timeout=65, headers=headers or None)
 

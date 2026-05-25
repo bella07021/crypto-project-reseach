@@ -215,7 +215,7 @@ class ProjectScorerTests(unittest.TestCase):
 
         self.assertNotIn("secret", captured["url"])
         self.assertEqual(captured["headers"]["x-vercel-protection-bypass"], "secret value")
-        self.assertEqual(captured["headers"]["x-vercel-set-bypass-cookie"], "true")
+        self.assertNotIn("x-vercel-set-bypass-cookie", captured["headers"])
 
     def test_fetch_live_project_detail_tries_alternate_rootdata_urls(self):
         incomplete_html = '<html><head><title>RootData</title></head><body>Please enable JavaScript</body></html>'
