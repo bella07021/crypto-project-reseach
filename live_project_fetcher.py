@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import ssl
+import subprocess
 import time
 from dataclasses import dataclass, field
 from datetime import date
@@ -108,6 +109,29 @@ def fetch_text(url: str, *, retries: int = 2, timeout: int = 25) -> str:
             last_error = exc
             time.sleep(1 + attempt)
     raise RuntimeError(f"fetch failed for {url}: {last_error}")
+
+
+def fetch_text_with_curl(url: str, *, timeout: int = 25) -> str:
+    result = subprocess.run(
+        [
+            "curl",
+            "-L",
+            "--max-time",
+            str(timeout),
+            "-s",
+            "-H",
+            f"User-Agent: {USER_AGENT}",
+            "-H",
+            "Accept-Language: en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7",
+            url,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        raise RuntimeError(result.stderr.strip() or f"curl failed with exit code {result.returncode}")
+    return result.stdout
 
 
 def clean_html_text(value: str) -> str:
@@ -440,6 +464,18 @@ def parse_rootdata_detail_html(html: str) -> LiveProjectDetail:
     return detail
 
 
+def has_rootdata_detail_payload(detail: LiveProjectDetail) -> bool:
+    return bool(
+        detail.project_name
+        and (
+            detail.website
+            or detail.funding_rounds
+            or detail.team_member_count
+            or detail.roadmap_events
+        )
+    )
+
+
 def fetch_x_followers(handle: str) -> tuple[Optional[int], str]:
     normalized = handle.strip().lstrip("@")
     if not normalized:
@@ -467,8 +503,14 @@ def fetch_x_followers(handle: str) -> tuple[Optional[int], str]:
 
 def fetch_live_project_detail(rootdata_url: str, x_handle: str = "", *, fetch_followers: bool = True) -> LiveProjectDetail:
     try:
-        html = fetch_text(rootdata_fetch_url(rootdata_url))
+        url = rootdata_fetch_url(rootdata_url)
+        try:
+            html = fetch_text(url)
+        except Exception:
+            html = fetch_text_with_curl(url)
         detail = parse_rootdata_detail_html(html)
+        if not has_rootdata_detail_payload(detail):
+            detail = parse_rootdata_detail_html(fetch_text_with_curl(url))
         detail.fetch_status = "ok"
     except Exception as exc:
         detail = LiveProjectDetail(fetch_status=f"rootdata_fetch_failed: {exc}")

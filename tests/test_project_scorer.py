@@ -6,6 +6,7 @@ import sys
 import tempfile
 from datetime import date
 from pathlib import Path
+from unittest.mock import patch
 
 from project_scorer import (
     calculate_funding_score,
@@ -13,7 +14,7 @@ from project_scorer import (
     calculate_team_score,
     calculate_total_score,
 )
-from live_project_fetcher import normalize_rootdata_url, parse_rootdata_detail_html
+from live_project_fetcher import fetch_live_project_detail, normalize_rootdata_url, parse_rootdata_detail_html
 from score_project import make_funding_round_rows, make_roadmap_event_rows, make_score_rows
 
 
@@ -62,6 +63,47 @@ class ProjectScorerTests(unittest.TestCase):
         self.assertEqual(detail.roadmap_events[0]["days_after_tge"], 0)
         self.assertEqual(detail.team_raw_score, 70)
         self.assertEqual(detail.team_background, "international")
+
+    def test_fetch_live_project_detail_refetches_incomplete_rootdata_html(self):
+        incomplete_html = '<html><head><title>RootData</title></head><body>Please enable JavaScript</body></html>'
+        complete_html = """
+        <h1>Nexus</h1>
+        <a href="https://www.nexus.xyz/">nexus.xyz</a>
+        <a href="https://x.com/nexuslabs">X</a>
+        <span>Location</span><span>United States</span>
+        <script>self.__next_f.push([1,"\\"milestones\\":[{\\"facAmountUs\\":25000000,\\"facDate\\":\\"2024-06-10 00:00:00\\",\\"roundsName\\":{\\"en_value\\":\\"Series A\\"},\\"desc\\":{\\"en_value\\":\\"Nexus raised $ 25 M in Series A round\\"}}]"])</script>
+        <script>self.__next_f.push([1,"team\\":[{\\"name\\":{\\"en_value\\":\\"Daniel Marin\\"},\\"twitterUrl\\":\\"https://x.com/danielmarinq\\"}]"])</script>
+        """
+
+        with patch("live_project_fetcher.fetch_text", return_value=incomplete_html), patch(
+            "live_project_fetcher.fetch_text_with_curl",
+            return_value=complete_html,
+            create=True,
+        ):
+            detail = fetch_live_project_detail("https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D", fetch_followers=False)
+
+        self.assertEqual(detail.project_name, "Nexus")
+        self.assertEqual(detail.website, "https://www.nexus.xyz/")
+        self.assertEqual(detail.latest_funding_amount_usd, 25_000_000)
+        self.assertEqual(detail.team_member_count, 1)
+        self.assertEqual(detail.fetch_status, "ok")
+
+    def test_fetch_live_project_detail_uses_curl_when_urlopen_fails(self):
+        complete_html = """
+        <h1>Nexus</h1>
+        <a href="https://www.nexus.xyz/">nexus.xyz</a>
+        <script>self.__next_f.push([1,"\\"milestones\\":[{\\"facAmountUs\\":25000000,\\"facDate\\":\\"2024-06-10 00:00:00\\",\\"roundsName\\":{\\"en_value\\":\\"Series A\\"}}]"])</script>
+        """
+
+        with patch("live_project_fetcher.fetch_text", side_effect=RuntimeError("dns failed")), patch(
+            "live_project_fetcher.fetch_text_with_curl",
+            return_value=complete_html,
+        ):
+            detail = fetch_live_project_detail("https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D", fetch_followers=False)
+
+        self.assertEqual(detail.project_name, "Nexus")
+        self.assertEqual(detail.latest_funding_amount_usd, 25_000_000)
+        self.assertEqual(detail.fetch_status, "ok")
 
     def test_score_sheet_keeps_latest_row_per_project(self):
         rows = make_score_rows(
