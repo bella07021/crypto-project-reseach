@@ -178,7 +178,7 @@ class ProjectScorerTests(unittest.TestCase):
     def test_vercel_browser_endpoint_url_uses_deployment_host(self):
         captured = {}
 
-        def fake_fetch(url, retries=1, timeout=65):
+        def fake_fetch(url, retries=1, timeout=65, headers=None):
             captured["url"] = url
             captured["timeout"] = timeout
             return "<html></html>"
@@ -196,8 +196,9 @@ class ProjectScorerTests(unittest.TestCase):
     def test_vercel_browser_endpoint_url_uses_automation_bypass_secret(self):
         captured = {}
 
-        def fake_fetch(url, retries=1, timeout=65):
+        def fake_fetch(url, retries=1, timeout=65, headers=None):
             captured["url"] = url
+            captured["headers"] = headers or {}
             return "<html></html>"
 
         with patch.dict(
@@ -212,8 +213,9 @@ class ProjectScorerTests(unittest.TestCase):
         ):
             fetch_text_with_vercel_browser("https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D")
 
-        self.assertIn("x-vercel-protection-bypass=secret+value", captured["url"])
-        self.assertIn("x-vercel-set-bypass-cookie=true", captured["url"])
+        self.assertNotIn("secret", captured["url"])
+        self.assertEqual(captured["headers"]["x-vercel-protection-bypass"], "secret value")
+        self.assertEqual(captured["headers"]["x-vercel-set-bypass-cookie"], "true")
 
     def test_fetch_live_project_detail_tries_alternate_rootdata_urls(self):
         incomplete_html = '<html><head><title>RootData</title></head><body>Please enable JavaScript</body></html>'

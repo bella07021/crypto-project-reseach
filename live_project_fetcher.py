@@ -112,14 +112,17 @@ def rootdata_fetch_urls(url: str) -> list[str]:
     return urls
 
 
-def fetch_text(url: str, *, retries: int = 2, timeout: int = 25) -> str:
+def fetch_text(url: str, *, retries: int = 2, timeout: int = 25, headers: dict[str, str] | None = None) -> str:
+    request_headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7",
+    }
+    if headers:
+        request_headers.update(headers)
     request = Request(
         url,
-        headers={
-            "User-Agent": USER_AGENT,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7",
-        },
+        headers=request_headers,
     )
     last_error: Exception | None = None
     for attempt in range(retries):
@@ -179,12 +182,13 @@ def fetch_text_with_vercel_browser(url: str) -> str:
     if not host.startswith(("http://", "https://")):
         host = f"https://{host}"
     params = {"url": url}
+    headers = {}
     bypass_secret = os.environ.get("VERCEL_AUTOMATION_BYPASS_SECRET", "").strip()
     if bypass_secret:
-        params["x-vercel-protection-bypass"] = bypass_secret
-        params["x-vercel-set-bypass-cookie"] = "true"
+        headers["x-vercel-protection-bypass"] = bypass_secret
+        headers["x-vercel-set-bypass-cookie"] = "true"
     request_url = f"{host.rstrip('/')}/api/rootdata-browser?{urlencode(params)}"
-    return fetch_text(request_url, retries=1, timeout=65)
+    return fetch_text(request_url, retries=1, timeout=65, headers=headers or None)
 
 
 def clean_html_text(value: str) -> str:
