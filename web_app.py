@@ -634,6 +634,35 @@ def combined_dashboard_rows(history: list[dict[str, Any]], requests: list[dict[s
     return request_dashboard_rows(requests, history) + dashboard_rows(history)
 
 
+def find_assessment_for_request(request: dict[str, Any], history: list[dict[str, Any]]) -> dict[str, Any] | None:
+    request_key = project_request_key(str(request.get("rootdata_url", "")), str(request.get("x_handle", "")))
+    request_handle = str(request.get("x_handle", "")).strip().lstrip("@").lower()
+    for row in reversed(history):
+        row_key = project_request_key(str(row.get("rootdata_url", "")), str(row.get("x_handle", "")))
+        row_handle = str(row.get("x_handle", "")).strip().lstrip("@").lower()
+        if request_key and request_key == row_key:
+            return row
+        if request_handle and request_handle == row_handle:
+            return row
+    return None
+
+
+def request_status_payload(
+    request_id: str,
+    requests: list[dict[str, Any]] | None = None,
+    history: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    rows = requests if requests is not None else read_github_requests()
+    request = next((row for row in rows if str(row.get("request_id", "")) == request_id), None)
+    if not request:
+        return {"ok": False, "error": "request not found"}
+    history_rows = history if history is not None else read_history_rows()
+    assessment = find_assessment_for_request(request, history_rows)
+    if assessment and request.get("status") != "failed":
+        request = {**request, "status": "done"}
+    return {"ok": True, "request": request, "assessment": assessment}
+
+
 class CryptoScoringHandler(BaseHTTPRequestHandler):
     server_version = "CryptoScoringWeb/0.1"
 
@@ -647,6 +676,10 @@ class CryptoScoringHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/requests":
             self.send_json({"ok": True, "rows": read_github_requests()[-50:][::-1]})
+            return
+        if parsed.path == "/api/request-status":
+            request_id = str(__import__("urllib.parse").parse.parse_qs(parsed.query).get("id", [""])[0])
+            self.send_json(request_status_payload(request_id), status=200 if request_id else 400)
             return
         if parsed.path == "/api/dashboard":
             history = read_history_rows()

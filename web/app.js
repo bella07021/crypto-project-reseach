@@ -1,6 +1,7 @@
 const state = {
   currentAssessment: null,
   activeRequest: null,
+  requestPollTimer: null,
   dashboardRows: [],
 };
 
@@ -182,6 +183,7 @@ function renderRoadmap(el, assessment) {
 function renderReport(assessment, workbook) {
   state.currentAssessment = assessment;
   state.activeRequest = null;
+  stopRequestPolling();
   const fragment = document.querySelector("#reportTemplate").content.cloneNode(true);
   const get = (name) => fragment.querySelector(`[data-field="${name}"]`);
   get("tokenTicker").textContent = tokenLabel(assessment);
@@ -233,6 +235,35 @@ function renderRequestStatus(request, created) {
       </ul>
     </section>
   `;
+}
+
+function stopRequestPolling() {
+  if (state.requestPollTimer) {
+    window.clearInterval(state.requestPollTimer);
+    state.requestPollTimer = null;
+  }
+}
+
+async function refreshActiveRequestStatus() {
+  if (!state.activeRequest?.request_id) return;
+  const response = await fetch(`/api/request-status?id=${encodeURIComponent(state.activeRequest.request_id)}`);
+  const payload = await response.json().catch(() => ({}));
+  if (!payload.ok) return;
+  if (payload.assessment) {
+    renderReport(payload.assessment, payload.assessment.workbook);
+    await loadDashboard();
+    return;
+  }
+  renderRequestStatus(payload.request || state.activeRequest, false);
+}
+
+function startRequestPolling(request) {
+  state.activeRequest = request;
+  stopRequestPolling();
+  state.requestPollTimer = window.setInterval(() => {
+    refreshActiveRequestStatus().catch(() => {});
+  }, 10000);
+  refreshActiveRequestStatus().catch(() => {});
 }
 
 async function loadDashboard() {
@@ -336,6 +367,7 @@ form.addEventListener("submit", async (event) => {
     const requestPayload = await requestResponse.json().catch(() => ({}));
     if (requestResponse.ok && requestPayload.ok) {
       renderRequestStatus(requestPayload.request, requestPayload.created);
+      startRequestPolling(requestPayload.request);
       await loadDashboard();
       return;
     }

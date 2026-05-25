@@ -9,6 +9,7 @@ from web_app import (
     append_github_history,
     create_project_request,
     dashboard_rows,
+    request_status_payload,
     request_dashboard_rows,
     exchange_progress,
     exchange_progress_from_cmc,
@@ -297,6 +298,30 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["request_status"], "pending")
         self.assertEqual(rows[0]["token_ticker"], "NewProject")
+
+    def test_request_status_payload_returns_done_assessment(self):
+        requests = [
+            {
+                "request_id": "req1",
+                "status": "done",
+                "x_handle": "NexusLabs",
+                "rootdata_url": "https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D",
+            }
+        ]
+        history = [
+            {
+                "x_handle": "NexusLabs",
+                "rootdata_url": "https://www.rootdata.com/Projects/detail/Nexus?k=MTE3NDI%3D",
+                "token_ticker": "NEX",
+                "total_score": 48.02,
+            }
+        ]
+
+        payload = request_status_payload("req1", requests, history)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["request"]["status"], "done")
+        self.assertEqual(payload["assessment"]["token_ticker"], "NEX")
 
 
 if __name__ == "__main__":
