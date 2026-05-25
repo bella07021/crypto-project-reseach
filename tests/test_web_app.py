@@ -34,6 +34,17 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(payload.listing_signal, ["binance_alpha"])
         self.assertTrue(payload.no_live)
 
+    def test_parse_score_payload_accepts_rootdata_html(self):
+        payload = parse_score_payload(
+            {
+                "x_handle": "@NexusLabs",
+                "rootdata_url": "https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D",
+                "rootdata_html": "<html>RootData</html>",
+            }
+        )
+
+        self.assertEqual(payload.rootdata_html, "<html>RootData</html>")
+
     def test_score_payload_returns_assessment_and_writes_workbook(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

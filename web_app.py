@@ -57,6 +57,7 @@ class ScorePayload:
     workbook: Path = field(default_factory=runtime_workbook_path)
     today: str | None = None
     no_live: bool = False
+    rootdata_html: str = ""
 
 
 def as_list(value: Any) -> list[str]:
@@ -96,6 +97,7 @@ def parse_score_payload(data: dict[str, Any]) -> ScorePayload:
         workbook=Path(str(data.get("workbook") or runtime_workbook_path())),
         today=str(data.get("today") or "").strip() or None,
         no_live=bool(data.get("no_live", False)),
+        rootdata_html=str(data.get("rootdata_html") or ""),
     )
 
 
@@ -115,6 +117,7 @@ def namespace_from_payload(payload: ScorePayload) -> argparse.Namespace:
         workbook=payload.workbook,
         today=payload.today,
         no_live=payload.no_live,
+        rootdata_html=payload.rootdata_html,
     )
 
 

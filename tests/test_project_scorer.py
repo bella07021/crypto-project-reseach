@@ -156,6 +156,25 @@ class ProjectScorerTests(unittest.TestCase):
         self.assertEqual(detail.latest_funding_amount_usd, 25_000_000)
         self.assertEqual(detail.fetch_status, "ok")
 
+    def test_fetch_live_project_detail_uses_supplied_rootdata_html(self):
+        complete_html = """
+        <h1>Nexus</h1>
+        <a href="https://www.nexus.xyz/">nexus.xyz</a>
+        <script>self.__next_f.push([1,"\\"milestones\\":[{\\"facAmountUs\\":25000000,\\"facDate\\":\\"2024-06-10 00:00:00\\",\\"roundsName\\":{\\"en_value\\":\\"Series A\\"}}]"])</script>
+        """
+
+        with patch("live_project_fetcher.fetch_text", side_effect=AssertionError("network should not be used")):
+            detail = fetch_live_project_detail(
+                "https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D",
+                fetch_followers=False,
+                rootdata_html=complete_html,
+            )
+
+        self.assertEqual(detail.project_name, "Nexus")
+        self.assertEqual(detail.website, "https://www.nexus.xyz/")
+        self.assertEqual(detail.latest_funding_amount_usd, 25_000_000)
+        self.assertEqual(detail.fetch_status, "ok")
+
     def test_vercel_browser_endpoint_url_uses_deployment_host(self):
         captured = {}
 

@@ -36,6 +36,19 @@ function formPayload() {
   };
 }
 
+async function fetchRootdataBrowserHtml(rootdataUrl) {
+  try {
+    const response = await fetch(`/api/rootdata-browser?url=${encodeURIComponent(rootdataUrl)}`, {
+      credentials: "include",
+    });
+    if (!response.ok) return "";
+    const html = await response.text();
+    return html.includes("RootData") || html.includes("__next_f") ? html : "";
+  } catch {
+    return "";
+  }
+}
+
 function switchView(name) {
   document.querySelectorAll(".view").forEach((view) => view.classList.remove("active"));
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.view === name));
@@ -240,12 +253,16 @@ async function checkHealth() {
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   submitButton.disabled = true;
-  submitButton.textContent = "评分中";
+  submitButton.textContent = "抓取 RootData";
   try {
+    const payloadToScore = formPayload();
+    const rootdataHtml = await fetchRootdataBrowserHtml(payloadToScore.rootdata_url);
+    if (rootdataHtml) payloadToScore.rootdata_html = rootdataHtml;
+    submitButton.textContent = "评分中";
     const response = await fetch("/api/score", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(formPayload()),
+      body: JSON.stringify(payloadToScore),
     });
     const payload = await response.json();
     if (!payload.ok) throw new Error(payload.error || "评分失败");

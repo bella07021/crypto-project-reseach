@@ -549,10 +549,23 @@ def fetch_x_followers(handle: str) -> tuple[Optional[int], str]:
     return None, "not_found"
 
 
-def fetch_live_project_detail(rootdata_url: str, x_handle: str = "", *, fetch_followers: bool = True) -> LiveProjectDetail:
+def fetch_live_project_detail(
+    rootdata_url: str,
+    x_handle: str = "",
+    *,
+    fetch_followers: bool = True,
+    rootdata_html: str = "",
+) -> LiveProjectDetail:
     detail = LiveProjectDetail(fetch_status="rootdata_incomplete")
     errors: list[str] = []
+    if rootdata_html.strip():
+        detail = parse_rootdata_detail_html(rootdata_html)
+        if has_rootdata_detail_payload(detail):
+            detail.fetch_status = "ok"
+
     for url in rootdata_fetch_urls(rootdata_url):
+        if has_rootdata_detail_payload(detail):
+            break
         try:
             html = fetch_text(url)
         except Exception:

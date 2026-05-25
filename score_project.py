@@ -75,7 +75,15 @@ def find_project_row(rows: Iterable[dict[str, str]], x_handle: str, rootdata_url
 def build_assessment(args: argparse.Namespace) -> dict[str, object]:
     benchmarks = load_benchmarks(args.benchmark_csv)
     project_row = find_project_row(benchmarks, args.x_handle, args.rootdata_url) or {}
-    live_detail = None if args.no_live else fetch_live_project_detail(args.rootdata_url, args.x_handle)
+    live_detail = (
+        None
+        if args.no_live
+        else fetch_live_project_detail(
+            args.rootdata_url,
+            args.x_handle,
+            rootdata_html=str(getattr(args, "rootdata_html", "") or ""),
+        )
+    )
 
     bucket = args.bucket or (live_detail.bucket if live_detail else "") or project_row.get("bucket", "")
     followers = (
