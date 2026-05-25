@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import mimetypes
 import os
@@ -9,6 +10,7 @@ import re
 import ssl
 import subprocess
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -30,6 +32,8 @@ from live_project_fetcher import normalize_rootdata_url
 ROOT = Path(__file__).resolve().parent
 WEB_DIR = ROOT / "web"
 GITHUB_HISTORY_PATH = "data/project_scores.jsonl"
+GITHUB_REQUESTS_PATH = "data/project_requests.jsonl"
+ACTIVE_REQUEST_STATUSES = {"pending", "processing"}
 
 
 def runtime_workbook_path() -> Path:
@@ -151,7 +155,7 @@ def read_history_rows(workbook: Path | None = None) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
-def github_storage_config() -> dict[str, str] | None:
+def github_storage_config(path: str | None = None) -> dict[str, str] | None:
     token = os.environ.get("GITHUB_TOKEN", "").strip()
     owner = (
         os.environ.get("GITHUB_REPO_OWNER", "").strip()
@@ -164,10 +168,10 @@ def github_storage_config() -> dict[str, str] | None:
         or "crypto-project-reseach"
     )
     branch = os.environ.get("GITHUB_BRANCH", "").strip() or "main"
-    path = os.environ.get("GITHUB_HISTORY_PATH", "").strip() or GITHUB_HISTORY_PATH
+    storage_path = path or os.environ.get("GITHUB_HISTORY_PATH", "").strip() or GITHUB_HISTORY_PATH
     if not token or not owner or not repo:
         return None
-    return {"token": token, "owner": owner, "repo": repo, "branch": branch, "path": path}
+    return {"token": token, "owner": owner, "repo": repo, "branch": branch, "path": storage_path}
 
 
 def github_storage_label() -> str:
@@ -234,6 +238,100 @@ def append_github_history(assessment: dict[str, Any]) -> list[dict[str, Any]]:
         payload["sha"] = sha
     github_contents_request(config, "PUT", payload)
     return rows
+
+
+def request_storage_path() -> str:
+    return os.environ.get("GITHUB_REQUESTS_PATH", "").strip() or GITHUB_REQUESTS_PATH
+
+
+def read_github_jsonl_with_sha(path: str) -> tuple[list[dict[str, Any]], str | None]:
+    config = github_storage_config(path)
+    if not config:
+        return [], None
+    try:
+        payload = github_contents_request(config, "GET")
+    except Exception:
+        return [], None
+    encoded = str(payload.get("content") or "")
+    text = base64.b64decode(encoded).decode("utf-8", errors="ignore") if encoded else ""
+    rows = [json.loads(line) for line in text.splitlines() if line.strip()]
+    return rows, payload.get("sha")
+
+
+def write_github_jsonl(path: str, rows: list[dict[str, Any]], message: str, sha: str | None = None) -> None:
+    config = github_storage_config(path)
+    if not config:
+        raise RuntimeError("GitHub storage is not configured")
+    content = "".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows)
+    payload: dict[str, Any] = {
+        "message": message,
+        "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+        "branch": config["branch"],
+    }
+    if sha:
+        payload["sha"] = sha
+    github_contents_request(config, "PUT", payload)
+
+
+def read_github_requests_with_sha() -> tuple[list[dict[str, Any]], str | None]:
+    return read_github_jsonl_with_sha(request_storage_path())
+
+
+def read_github_requests() -> list[dict[str, Any]]:
+    rows, _ = read_github_requests_with_sha()
+    return rows
+
+
+def write_github_requests(rows: list[dict[str, Any]], message: str, sha: str | None = None) -> None:
+    write_github_jsonl(request_storage_path(), rows, message, sha)
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def project_request_key(rootdata_url: str, x_handle: str = "") -> str:
+    normalized_url = normalize_rootdata_url(rootdata_url)
+    if normalized_url:
+        return normalized_url.lower()
+    return x_handle.strip().lstrip("@").lower()
+
+
+def project_request_id(request_key: str) -> str:
+    return hashlib.sha256(request_key.encode("utf-8")).hexdigest()[:16]
+
+
+def create_project_request(data: dict[str, Any]) -> dict[str, Any]:
+    x_handle = str(data.get("x_handle", "")).strip().lstrip("@")
+    rootdata_url = str(data.get("rootdata_url", "")).strip()
+    if not x_handle:
+        raise ValueError("x_handle is required")
+    if not rootdata_url:
+        raise ValueError("rootdata_url is required")
+
+    rows, sha = read_github_requests_with_sha()
+    request_key = project_request_key(rootdata_url, x_handle)
+    for row in reversed(rows):
+        row_keys = {
+            str(row.get("request_key") or "").lower(),
+            project_request_key(str(row.get("rootdata_url", "")), str(row.get("x_handle", ""))),
+        }
+        if request_key in row_keys and str(row.get("status", "")) in ACTIVE_REQUEST_STATUSES:
+            return {"ok": True, "created": False, "request": row}
+
+    timestamp = now_iso()
+    request = {
+        "request_id": project_request_id(request_key),
+        "request_key": request_key,
+        "status": "pending",
+        "x_handle": x_handle,
+        "rootdata_url": rootdata_url,
+        "requested_at": timestamp,
+        "updated_at": timestamp,
+    }
+    rows.append(request)
+    write_github_requests(rows, f"Add project request for {x_handle}", sha)
+    return {"ok": True, "created": True, "request": request}
 
 
 EXCHANGE_SCORE_RULES = [
@@ -488,6 +586,54 @@ def dashboard_rows(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(rows, key=lambda item: float(item.get("total_score") or 0), reverse=True)
 
 
+def request_dashboard_rows(requests: list[dict[str, Any]], history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    scored_keys = {
+        normalize_rootdata_url(str(row.get("rootdata_url", ""))).lower() or str(row.get("x_handle", "")).lower()
+        for row in history
+    }
+    rows = []
+    for request in requests:
+        status = str(request.get("status", ""))
+        if status == "done":
+            continue
+        request_key = project_request_key(str(request.get("rootdata_url", "")), str(request.get("x_handle", "")))
+        if request_key in scored_keys:
+            continue
+        x_handle = str(request.get("x_handle", ""))
+        rows.append(
+            {
+                "token_ticker": x_handle or "--",
+                "project_name": "",
+                "x_handle": x_handle,
+                "rootdata_url": request.get("rootdata_url", ""),
+                "total_score": "",
+                "team_score": "",
+                "funding_score": "",
+                "social_score": "",
+                "tge_status": status,
+                "tge_probability": 0,
+                "tge_date": "",
+                "tge_method": "",
+                "roadmap_events": [],
+                "exchange_score": 0,
+                "exchange_progress": 0,
+                "exchange_raw_score": 0,
+                "exchange_source": "request_queue",
+                "listed_exchanges": [],
+                "request_id": request.get("request_id", ""),
+                "request_status": status,
+                "requested_at": request.get("requested_at", ""),
+                "error": request.get("error", ""),
+                "assessment": request,
+            }
+        )
+    return sorted(rows, key=lambda item: str(item.get("requested_at", "")), reverse=True)
+
+
+def combined_dashboard_rows(history: list[dict[str, Any]], requests: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return request_dashboard_rows(requests, history) + dashboard_rows(history)
+
+
 class CryptoScoringHandler(BaseHTTPRequestHandler):
     server_version = "CryptoScoringWeb/0.1"
 
@@ -499,21 +645,25 @@ class CryptoScoringHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/history":
             self.send_json(self.read_history())
             return
+        if parsed.path == "/api/requests":
+            self.send_json({"ok": True, "rows": read_github_requests()[-50:][::-1]})
+            return
         if parsed.path == "/api/dashboard":
-            self.send_json({"ok": True, "rows": dashboard_rows(read_history_rows())})
+            history = read_history_rows()
+            self.send_json({"ok": True, "rows": combined_dashboard_rows(history, read_github_requests())})
             return
         self.serve_static(parsed.path)
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path != "/api/score":
+        if parsed.path not in {"/api/score", "/api/request"}:
             self.send_error(404)
             return
         try:
             length = int(self.headers.get("content-length", "0"))
             raw = self.rfile.read(length).decode("utf-8")
             data = json.loads(raw or "{}")
-            result = score_payload(data)
+            result = create_project_request(data) if parsed.path == "/api/request" else score_payload(data)
             self.send_json(result)
         except Exception as exc:
             self.send_json({"ok": False, "error": str(exc)}, status=400)

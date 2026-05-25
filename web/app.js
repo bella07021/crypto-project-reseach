@@ -181,6 +181,30 @@ function renderReport(assessment, workbook) {
   reportMount.appendChild(fragment);
 }
 
+function renderRequestStatus(request, created) {
+  const statusText = request.status === "processing"
+    ? "本地 watcher 正在处理"
+    : request.status === "failed"
+      ? `处理失败：${request.error || "--"}`
+      : "已加入本地抓取队列";
+  reportMount.innerHTML = `
+    <section class="report-section">
+      <div class="section-title">
+        <h3>${created ? "新项目已提交" : "项目已在队列中"}</h3>
+        <span>${request.status || "pending"}</span>
+      </div>
+      <div class="detail-grid">
+        <div><span>X handle</span><strong>@${request.x_handle || "--"}</strong></div>
+        <div><span>RootData</span><strong>${request.rootdata_url || "--"}</strong></div>
+      </div>
+      <ul class="clean-list">
+        <li>${statusText}</li>
+        <li>你本地 watcher 发现请求后会自动抓取、评分并写回 Dashboard。</li>
+      </ul>
+    </section>
+  `;
+}
+
 async function loadDashboard() {
   const response = await fetch("/api/dashboard");
   const payload = await response.json();
@@ -210,6 +234,11 @@ function roadmapSummary(row) {
 }
 
 function tgeSummary(row) {
+  if (row.request_status) {
+    if (row.request_status === "failed") return `队列失败 · ${row.error || "--"}`;
+    if (row.request_status === "processing") return "队列处理中";
+    return "队列等待中";
+  }
   if (row.tge_status === "已 TGE") return `${row.tge_method || "TGE"} · ${row.tge_date || "--"}`;
   return `未 TGE · ${integerText(row.tge_probability)}%`;
 }
@@ -233,7 +262,11 @@ function renderDashboard() {
     `;
     tr.querySelector(".ticker-link").addEventListener("click", () => {
       switchView("add");
-      renderReport(row.assessment, row.assessment?.workbook);
+      if (row.request_status) {
+        renderRequestStatus(row.assessment || row, false);
+      } else {
+        renderReport(row.assessment, row.assessment?.workbook);
+      }
       window.scrollTo({ top: 0, behavior: "smooth" });
     });
     dashboardBody.appendChild(tr);
@@ -256,6 +289,18 @@ form.addEventListener("submit", async (event) => {
   submitButton.textContent = "抓取 RootData";
   try {
     const payloadToScore = formPayload();
+    const requestResponse = await fetch("/api/request", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payloadToScore),
+    });
+    const requestPayload = await requestResponse.json().catch(() => ({}));
+    if (requestResponse.ok && requestPayload.ok) {
+      renderRequestStatus(requestPayload.request, requestPayload.created);
+      await loadDashboard();
+      return;
+    }
+
     const rootdataHtml = await fetchRootdataBrowserHtml(payloadToScore.rootdata_url);
     if (rootdataHtml) payloadToScore.rootdata_html = rootdataHtml;
     submitButton.textContent = "评分中";

@@ -7,7 +7,9 @@ from unittest.mock import patch
 
 from web_app import (
     append_github_history,
+    create_project_request,
     dashboard_rows,
+    request_dashboard_rows,
     exchange_progress,
     exchange_progress_from_cmc,
     parse_score_payload,
@@ -219,6 +221,82 @@ class WebAppTests(unittest.TestCase):
         decoded = __import__("base64").b64decode(captured["payload"]["content"]).decode("utf-8")
         self.assertIn('"token_ticker": "DEMO"', decoded)
         self.assertIn("/repos/bella07021/crypto-project-reseach/contents/data/project_scores.jsonl", captured["url"])
+
+    def test_create_project_request_deduplicates_active_rootdata_url(self):
+        writes = []
+        existing = {
+            "request_id": "abc123",
+            "status": "pending",
+            "x_handle": "NexusLabs",
+            "rootdata_url": "https://www.rootdata.com/Projects/detail/Nexus?k=MTE3NDI%3D",
+            "request_key": "rootdata.com/projects/detail/nexus?k=mte3ndi%3d",
+        }
+
+        with patch("web_app.read_github_requests_with_sha", return_value=([existing], "sha")), patch(
+            "web_app.write_github_requests",
+            side_effect=lambda rows, message, sha=None: writes.append((rows, message, sha)),
+        ):
+            result = create_project_request(
+                {
+                    "x_handle": "@NexusLabs",
+                    "rootdata_url": "https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D",
+                }
+            )
+
+        self.assertFalse(result["created"])
+        self.assertEqual(result["request"]["request_id"], "abc123")
+        self.assertEqual(writes, [])
+
+    def test_create_project_request_appends_pending_request(self):
+        writes = []
+
+        with patch("web_app.read_github_requests_with_sha", return_value=([], None)), patch(
+            "web_app.write_github_requests",
+            side_effect=lambda rows, message, sha=None: writes.append((rows, message, sha)),
+        ):
+            result = create_project_request(
+                {
+                    "x_handle": "@NexusLabs",
+                    "rootdata_url": "https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D",
+                }
+            )
+
+        self.assertTrue(result["created"])
+        self.assertEqual(result["request"]["status"], "pending")
+        self.assertEqual(result["request"]["x_handle"], "NexusLabs")
+        self.assertEqual(len(writes[0][0]), 1)
+        self.assertEqual(writes[0][1], "Add project request for NexusLabs")
+
+    def test_request_dashboard_rows_excludes_projects_with_scores(self):
+        requests = [
+            {
+                "request_id": "pending1",
+                "status": "pending",
+                "x_handle": "NewProject",
+                "rootdata_url": "https://cn.rootdata.com/projects/detail/New?k=MQ%3D%3D",
+                "requested_at": "2026-05-25T09:00:00+00:00",
+            },
+            {
+                "request_id": "done1",
+                "status": "pending",
+                "x_handle": "NexusLabs",
+                "rootdata_url": "https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D",
+                "requested_at": "2026-05-25T08:00:00+00:00",
+            },
+        ]
+        history = [
+            {
+                "x_handle": "NexusLabs",
+                "rootdata_url": "https://www.rootdata.com/Projects/detail/Nexus?k=MTE3NDI%3D",
+                "token_ticker": "NEX",
+            }
+        ]
+
+        rows = request_dashboard_rows(requests, history)
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["request_status"], "pending")
+        self.assertEqual(rows[0]["token_ticker"], "NewProject")
 
 
 if __name__ == "__main__":
