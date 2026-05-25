@@ -75,6 +75,23 @@ class ProjectScorerTests(unittest.TestCase):
         self.assertEqual(detail.team_raw_score, 70)
         self.assertEqual(detail.team_background, "international")
 
+    def test_parse_rootdata_detail_html_infers_international_team_from_member_names_without_location(self):
+        html = """
+        <h1>Solstice</h1>
+        <a href="https://solsticelabs.io/">solsticelabs.io</a>
+        <a href="https://x.com/solsticefi">X</a>
+        <script>self.__next_f.push([1,"team\\":[
+          {\\"name\\":{\\"en_value\\":\\"Ben Nadareski\\"},\\"lyingUrl\\":\\"https://linkedin.com/in/ben\\",\\"twitterUrl\\":\\"https://x.com/ben\\"},
+          {\\"name\\":{\\"en_value\\":\\"Rena Shah\\"},\\"lyingUrl\\":\\"https://linkedin.com/in/rena\\"},
+          {\\"name\\":{\\"en_value\\":\\"Marco Di Maggio\\"},\\"lyingUrl\\":\\"https://linkedin.com/in/marco\\"}
+        ]"])</script>
+        """
+
+        detail = parse_rootdata_detail_html(html)
+
+        self.assertEqual(detail.team_member_count, 3)
+        self.assertEqual(detail.team_background, "international")
+
     def test_fetch_live_project_detail_refetches_incomplete_rootdata_html(self):
         incomplete_html = '<html><head><title>RootData</title></head><body>Please enable JavaScript</body></html>'
         complete_html = """

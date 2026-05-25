@@ -393,10 +393,21 @@ def infer_bucket(tags: list[str], fallback_text: str = "") -> str:
     return ""
 
 
-def infer_team_score(team_member_count: int, location: str) -> tuple[float, str]:
+def looks_like_international_name(value: str) -> bool:
+    cleaned = value.strip()
+    return bool(re.fullmatch(r"[A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+)+", cleaned))
+
+
+def infer_team_score(team_member_count: int, location: str, member_names: set[str] | None = None) -> tuple[float, str]:
     location_lower = location.lower()
     pure_chinese = any(token in location_lower for token in ["china", "hong kong", "beijing", "shanghai", "中国", "香港"])
-    background = "pure_chinese" if pure_chinese else ("international" if location else "unknown")
+    international_members = sum(1 for name in (member_names or set()) if looks_like_international_name(name))
+    if pure_chinese:
+        background = "pure_chinese"
+    elif location or international_members >= 2:
+        background = "international"
+    else:
+        background = "unknown"
     if team_member_count >= 4:
         raw_score = 85
     elif team_member_count >= 2:
@@ -450,7 +461,11 @@ def parse_rootdata_detail_html(html: str) -> LiveProjectDetail:
         member_names = set(re.findall(r'"name":\{[^}]*"en_value":"([^"]+)', html))
     detail.team_member_count = len(member_names)
     detail.named_team_member_count = len(member_names)
-    detail.team_raw_score, detail.team_background = infer_team_score(detail.team_member_count, detail.location)
+    detail.team_raw_score, detail.team_background = infer_team_score(
+        detail.team_member_count,
+        detail.location,
+        member_names,
+    )
 
     total_match = re.search(r'\\"facAmountUS\\":(\d+)|"facAmountUS":(\d+)', html)
     if total_match:
