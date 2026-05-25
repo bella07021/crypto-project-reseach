@@ -105,6 +105,38 @@ class ProjectScorerTests(unittest.TestCase):
         self.assertEqual(detail.latest_funding_amount_usd, 25_000_000)
         self.assertEqual(detail.fetch_status, "ok")
 
+    def test_fetch_live_project_detail_uses_browser_when_curl_is_incomplete(self):
+        incomplete_html = '<html><head><title>RootData</title></head><body>Please enable JavaScript</body></html>'
+        complete_html = """
+        <h1>Nexus</h1>
+        <a href="https://www.nexus.xyz/">nexus.xyz</a>
+        <script>self.__next_f.push([1,"\\"milestones\\":[{\\"facAmountUs\\":25000000,\\"facDate\\":\\"2024-06-10 00:00:00\\",\\"roundsName\\":{\\"en_value\\":\\"Series A\\"}}]"])</script>
+        """
+
+        with patch("live_project_fetcher.fetch_text", return_value=incomplete_html), patch(
+            "live_project_fetcher.fetch_text_with_curl",
+            return_value=incomplete_html,
+        ), patch("live_project_fetcher.fetch_text_with_browser", return_value=complete_html, create=True):
+            detail = fetch_live_project_detail("https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D", fetch_followers=False)
+
+        self.assertEqual(detail.project_name, "Nexus")
+        self.assertEqual(detail.website, "https://www.nexus.xyz/")
+        self.assertEqual(detail.latest_funding_amount_usd, 25_000_000)
+        self.assertEqual(detail.fetch_status, "ok")
+
+    def test_fetch_live_project_detail_marks_incomplete_payload(self):
+        incomplete_html = '<html><head><title>RootData</title></head><body>Please enable JavaScript</body></html>'
+
+        with patch("live_project_fetcher.fetch_text", return_value=incomplete_html), patch(
+            "live_project_fetcher.fetch_text_with_curl",
+            return_value=incomplete_html,
+        ), patch("live_project_fetcher.fetch_text_with_browser", return_value=incomplete_html, create=True):
+            detail = fetch_live_project_detail("https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D", fetch_followers=False)
+
+        self.assertEqual(detail.project_name, "")
+        self.assertEqual(detail.fetch_status, "rootdata_incomplete")
+        self.assertIn("RootData detail payload incomplete", detail.evidence_notes)
+
     def test_score_sheet_keeps_latest_row_per_project(self):
         rows = make_score_rows(
             [

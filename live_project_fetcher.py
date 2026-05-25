@@ -8,6 +8,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import date
 from html import unescape
+from pathlib import Path
 from typing import Optional
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, urlparse
@@ -131,6 +132,20 @@ def fetch_text_with_curl(url: str, *, timeout: int = 25) -> str:
     )
     if result.returncode != 0 or not result.stdout.strip():
         raise RuntimeError(result.stderr.strip() or f"curl failed with exit code {result.returncode}")
+    return result.stdout
+
+
+def fetch_text_with_browser(url: str, *, timeout: int = 70) -> str:
+    result = subprocess.run(
+        ["node", "rootdata_browser_scrape.js", url],
+        cwd=Path(__file__).resolve().parent,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        raise RuntimeError(result.stderr.strip() or f"browser scrape failed with exit code {result.returncode}")
     return result.stdout
 
 
@@ -511,7 +526,13 @@ def fetch_live_project_detail(rootdata_url: str, x_handle: str = "", *, fetch_fo
         detail = parse_rootdata_detail_html(html)
         if not has_rootdata_detail_payload(detail):
             detail = parse_rootdata_detail_html(fetch_text_with_curl(url))
-        detail.fetch_status = "ok"
+        if not has_rootdata_detail_payload(detail):
+            detail = parse_rootdata_detail_html(fetch_text_with_browser(url))
+        if has_rootdata_detail_payload(detail):
+            detail.fetch_status = "ok"
+        else:
+            detail.fetch_status = "rootdata_incomplete"
+            detail.evidence_notes.append("RootData detail payload incomplete")
     except Exception as exc:
         detail = LiveProjectDetail(fetch_status=f"rootdata_fetch_failed: {exc}")
 
