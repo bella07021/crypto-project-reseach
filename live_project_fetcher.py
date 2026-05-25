@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import ssl
@@ -12,7 +13,7 @@ from html import unescape
 from pathlib import Path
 from typing import Optional
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import parse_qs, quote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from project_scorer import parse_followers
@@ -169,6 +170,16 @@ def fetch_text_with_browser(url: str, *, timeout: int = 70) -> str:
     if result.returncode != 0 or not result.stdout.strip():
         raise RuntimeError(result.stderr.strip() or f"browser scrape failed with exit code {result.returncode}")
     return result.stdout
+
+
+def fetch_text_with_vercel_browser(url: str) -> str:
+    host = os.environ.get("VERCEL_URL", "").strip()
+    if not host:
+        raise RuntimeError("VERCEL_URL unavailable")
+    if not host.startswith(("http://", "https://")):
+        host = f"https://{host}"
+    request_url = f"{host.rstrip('/')}/api/rootdata-browser?{urlencode({'url': url})}"
+    return fetch_text(request_url, retries=1, timeout=65)
 
 
 def clean_html_text(value: str) -> str:
@@ -567,7 +578,10 @@ def fetch_live_project_detail(rootdata_url: str, x_handle: str = "", *, fetch_fo
     if not has_rootdata_detail_payload(detail):
         try:
             url = rootdata_fetch_urls(rootdata_url)[0]
-            detail = parse_rootdata_detail_html(fetch_text_with_browser(url))
+            if os.environ.get("VERCEL"):
+                detail = parse_rootdata_detail_html(fetch_text_with_vercel_browser(url))
+            else:
+                detail = parse_rootdata_detail_html(fetch_text_with_browser(url))
         except Exception as exc:
             errors.append(f"browser: {exc}")
         if not has_rootdata_detail_payload(detail):

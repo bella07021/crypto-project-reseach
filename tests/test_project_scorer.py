@@ -14,7 +14,13 @@ from project_scorer import (
     calculate_team_score,
     calculate_total_score,
 )
-from live_project_fetcher import fetch_live_project_detail, normalize_rootdata_url, parse_rootdata_detail_html, rootdata_fetch_urls
+from live_project_fetcher import (
+    fetch_live_project_detail,
+    fetch_text_with_vercel_browser,
+    normalize_rootdata_url,
+    parse_rootdata_detail_html,
+    rootdata_fetch_urls,
+)
 from score_project import make_funding_round_rows, make_roadmap_event_rows, make_score_rows
 
 
@@ -128,6 +134,45 @@ class ProjectScorerTests(unittest.TestCase):
         self.assertEqual(detail.website, "https://www.nexus.xyz/")
         self.assertEqual(detail.latest_funding_amount_usd, 25_000_000)
         self.assertEqual(detail.fetch_status, "ok")
+
+    def test_fetch_live_project_detail_uses_vercel_browser_endpoint(self):
+        incomplete_html = '<html><head><title>RootData</title></head><body>Please enable JavaScript</body></html>'
+        complete_html = """
+        <h1>Nexus</h1>
+        <a href="https://www.nexus.xyz/">nexus.xyz</a>
+        <script>self.__next_f.push([1,"\\"milestones\\":[{\\"facAmountUs\\":25000000,\\"facDate\\":\\"2024-06-10 00:00:00\\",\\"roundsName\\":{\\"en_value\\":\\"Series A\\"}}]"])</script>
+        """
+
+        with patch.dict("os.environ", {"VERCEL": "1", "VERCEL_URL": "example.vercel.app"}), patch(
+            "live_project_fetcher.fetch_text",
+            return_value=incomplete_html,
+        ), patch("live_project_fetcher.fetch_text_with_curl", return_value=incomplete_html), patch(
+            "live_project_fetcher.fetch_text_with_vercel_browser",
+            return_value=complete_html,
+        ):
+            detail = fetch_live_project_detail("https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D", fetch_followers=False)
+
+        self.assertEqual(detail.project_name, "Nexus")
+        self.assertEqual(detail.latest_funding_amount_usd, 25_000_000)
+        self.assertEqual(detail.fetch_status, "ok")
+
+    def test_vercel_browser_endpoint_url_uses_deployment_host(self):
+        captured = {}
+
+        def fake_fetch(url, retries=1, timeout=65):
+            captured["url"] = url
+            captured["timeout"] = timeout
+            return "<html></html>"
+
+        with patch.dict("os.environ", {"VERCEL_URL": "example.vercel.app"}), patch(
+            "live_project_fetcher.fetch_text",
+            side_effect=fake_fetch,
+        ):
+            fetch_text_with_vercel_browser("https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D")
+
+        self.assertTrue(captured["url"].startswith("https://example.vercel.app/api/rootdata-browser?"))
+        self.assertIn("url=https%3A%2F%2Fcn.rootdata.com", captured["url"])
+        self.assertEqual(captured["timeout"], 65)
 
     def test_fetch_live_project_detail_tries_alternate_rootdata_urls(self):
         incomplete_html = '<html><head><title>RootData</title></head><body>Please enable JavaScript</body></html>'

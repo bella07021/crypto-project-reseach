@@ -1,6 +1,15 @@
 {
   "version": 2,
+  "functions": {
+    "api/rootdata_browser.js": {
+      "maxDuration": 60
+    }
+  },
   "rewrites": [
+    {
+      "source": "/api/rootdata-browser",
+      "destination": "/api/rootdata_browser.js"
+    },
     {
       "source": "/(.*)",
       "destination": "/api/index.py"
