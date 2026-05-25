@@ -179,6 +179,9 @@ def slugify_project_name(value: str) -> str:
 
 
 def fetch_cmc_web_market_pairs(project_name: str, token_ticker: str) -> list[dict[str, Any]]:
+    if os.environ.get("VERCEL"):
+        return []
+
     slug = slugify_project_name(project_name)
     symbol = token_ticker.upper().strip()
     if not slug:

@@ -1,12 +1,15 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from web_app import (
     dashboard_rows,
     exchange_progress,
     exchange_progress_from_cmc,
+    fetch_cmc_web_market_pairs,
     parse_score_payload,
     score_payload,
 )
@@ -163,6 +166,10 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(progress["exchange_raw_score"], 12.5)
         self.assertEqual(progress["exchange_score"], 41.67)
         self.assertEqual(progress["listed_exchanges"], ["Coinbase", "Bitget", "KuCoin", "MEXC", "Kraken"])
+
+    def test_cmc_web_scrape_is_skipped_on_vercel(self):
+        with patch.dict(os.environ, {"VERCEL": "1"}):
+            self.assertEqual(fetch_cmc_web_market_pairs("Sui", "SUI"), [])
 
 
 if __name__ == "__main__":
