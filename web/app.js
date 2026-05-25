@@ -183,10 +183,13 @@ function renderReport(assessment, workbook) {
 
 function renderRequestStatus(request, created) {
   const statusText = request.status === "processing"
-    ? "本地 watcher 正在处理"
+    ? "项目正在抓取与评分中，通常约 1 分钟内完成。"
     : request.status === "failed"
       ? `处理失败：${request.error || "--"}`
-      : "已加入本地抓取队列";
+      : "已加入本地抓取队列，通常约 1 分钟内返回结果。";
+  const helpText = request.status === "failed"
+    ? "可联系负责人检查项目链接或重新提交。"
+    : "若超过 5 分钟仍未返回结果，请联系负责人重启本地处理脚本。";
   reportMount.innerHTML = `
     <section class="report-section">
       <div class="section-title">
@@ -199,7 +202,7 @@ function renderRequestStatus(request, created) {
       </div>
       <ul class="clean-list">
         <li>${statusText}</li>
-        <li>你本地 watcher 发现请求后会自动抓取、评分并写回 Dashboard。</li>
+        <li>${helpText}</li>
       </ul>
     </section>
   `;
