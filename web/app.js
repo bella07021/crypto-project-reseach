@@ -1,5 +1,6 @@
 const state = {
   currentAssessment: null,
+  activeRequest: null,
   dashboardRows: [],
 };
 
@@ -34,6 +35,30 @@ function formPayload() {
     x_handle: data.get("x_handle"),
     rootdata_url: data.get("rootdata_url"),
   };
+}
+
+function normalizeHandle(value) {
+  return String(value || "").trim().replace(/^@/, "").toLowerCase();
+}
+
+function normalizeRootdataUrl(value) {
+  try {
+    const parsed = new URL(String(value || "").trim());
+    const host = parsed.hostname.replace(/^(cn|www)\./, "");
+    const path = parsed.pathname.toLowerCase().replace("/projects/detail/", "/projects/detail/");
+    const params = new URLSearchParams(parsed.search);
+    const key = params.has("k") ? `?k=${params.get("k") || ""}` : parsed.search;
+    return `${host}${path}${key}`.toLowerCase();
+  } catch {
+    return String(value || "").trim().toLowerCase();
+  }
+}
+
+function sameProject(left, right) {
+  const leftUrl = normalizeRootdataUrl(left.rootdata_url);
+  const rightUrl = normalizeRootdataUrl(right.rootdata_url);
+  if (leftUrl && rightUrl && leftUrl === rightUrl) return true;
+  return normalizeHandle(left.x_handle) && normalizeHandle(left.x_handle) === normalizeHandle(right.x_handle);
 }
 
 async function fetchRootdataBrowserHtml(rootdataUrl) {
@@ -156,6 +181,7 @@ function renderRoadmap(el, assessment) {
 
 function renderReport(assessment, workbook) {
   state.currentAssessment = assessment;
+  state.activeRequest = null;
   const fragment = document.querySelector("#reportTemplate").content.cloneNode(true);
   const get = (name) => fragment.querySelector(`[data-field="${name}"]`);
   get("tokenTicker").textContent = tokenLabel(assessment);
@@ -182,6 +208,7 @@ function renderReport(assessment, workbook) {
 }
 
 function renderRequestStatus(request, created) {
+  state.activeRequest = request;
   const statusText = request.status === "processing"
     ? "项目正在抓取与评分中，通常约 1 分钟内完成。"
     : request.status === "failed"
@@ -213,6 +240,15 @@ async function loadDashboard() {
   const payload = await response.json();
   state.dashboardRows = payload.rows || [];
   renderDashboard();
+  syncActiveRequestWithDashboard();
+}
+
+function syncActiveRequestWithDashboard() {
+  if (!state.activeRequest) return;
+  const completed = state.dashboardRows.find((row) => !row.request_status && sameProject(state.activeRequest, row));
+  if (completed) {
+    renderReport(completed.assessment || completed, completed.assessment?.workbook);
+  }
 }
 
 function roadmapSummary(row) {
