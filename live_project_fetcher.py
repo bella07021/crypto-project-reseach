@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import ssl
 import subprocess
 import time
@@ -91,6 +92,25 @@ def rootdata_fetch_url(url: str) -> str:
     return parsed._replace(scheme=parsed.scheme or "https", netloc=host, path=path).geturl()
 
 
+def rootdata_fetch_urls(url: str) -> list[str]:
+    parsed = urlparse(url.strip())
+    scheme = parsed.scheme or "https"
+    path_lower = re.sub(r"^/projects/detail/", "/projects/detail/", parsed.path, flags=re.I)
+    path_upper = re.sub(r"^/projects/detail/", "/Projects/detail/", parsed.path, flags=re.I)
+    hosts = [parsed.netloc or "www.rootdata.com"]
+    for host in ("cn.rootdata.com", "www.rootdata.com"):
+        if host not in hosts:
+            hosts.append(host)
+
+    urls = []
+    for host in hosts:
+        for path in (path_lower, path_upper):
+            candidate = parsed._replace(scheme=scheme, netloc=host, path=path).geturl()
+            if candidate not in urls:
+                urls.append(candidate)
+    return urls
+
+
 def fetch_text(url: str, *, retries: int = 2, timeout: int = 25) -> str:
     request = Request(
         url,
@@ -136,6 +156,8 @@ def fetch_text_with_curl(url: str, *, timeout: int = 25) -> str:
 
 
 def fetch_text_with_browser(url: str, *, timeout: int = 70) -> str:
+    if not shutil.which("node"):
+        raise RuntimeError("node runtime unavailable")
     result = subprocess.run(
         ["node", "rootdata_browser_scrape.js", url],
         cwd=Path(__file__).resolve().parent,
@@ -517,24 +539,44 @@ def fetch_x_followers(handle: str) -> tuple[Optional[int], str]:
 
 
 def fetch_live_project_detail(rootdata_url: str, x_handle: str = "", *, fetch_followers: bool = True) -> LiveProjectDetail:
-    try:
-        url = rootdata_fetch_url(rootdata_url)
+    detail = LiveProjectDetail(fetch_status="rootdata_incomplete")
+    errors: list[str] = []
+    for url in rootdata_fetch_urls(rootdata_url):
         try:
             html = fetch_text(url)
         except Exception:
-            html = fetch_text_with_curl(url)
-        detail = parse_rootdata_detail_html(html)
-        if not has_rootdata_detail_payload(detail):
-            detail = parse_rootdata_detail_html(fetch_text_with_curl(url))
-        if not has_rootdata_detail_payload(detail):
-            detail = parse_rootdata_detail_html(fetch_text_with_browser(url))
-        if has_rootdata_detail_payload(detail):
+            try:
+                html = fetch_text_with_curl(url)
+            except Exception as exc:
+                errors.append(f"{url}: {exc}")
+                continue
+        candidate = parse_rootdata_detail_html(html)
+        if not has_rootdata_detail_payload(candidate):
+            try:
+                candidate = parse_rootdata_detail_html(fetch_text_with_curl(url))
+            except Exception as exc:
+                errors.append(f"{url}: {exc}")
+        if has_rootdata_detail_payload(candidate):
+            detail = candidate
             detail.fetch_status = "ok"
-        else:
+            break
+        if candidate.project_name and not detail.project_name:
+            detail = candidate
+            detail.fetch_status = "rootdata_incomplete"
+
+    if not has_rootdata_detail_payload(detail):
+        try:
+            url = rootdata_fetch_urls(rootdata_url)[0]
+            detail = parse_rootdata_detail_html(fetch_text_with_browser(url))
+        except Exception as exc:
+            errors.append(f"browser: {exc}")
+        if not has_rootdata_detail_payload(detail):
             detail.fetch_status = "rootdata_incomplete"
             detail.evidence_notes.append("RootData detail payload incomplete")
-    except Exception as exc:
-        detail = LiveProjectDetail(fetch_status=f"rootdata_fetch_failed: {exc}")
+            if errors:
+                detail.evidence_notes.append("RootData fetch errors: " + " | ".join(errors[-2:]))
+        else:
+            detail.fetch_status = "ok"
 
     if x_handle and normalize_handle_from_url(f"https://x.com/{x_handle}") != detail.x_handle:
         detail.x_handle = x_handle.strip().lstrip("@")

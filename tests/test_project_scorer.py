@@ -14,7 +14,7 @@ from project_scorer import (
     calculate_team_score,
     calculate_total_score,
 )
-from live_project_fetcher import fetch_live_project_detail, normalize_rootdata_url, parse_rootdata_detail_html
+from live_project_fetcher import fetch_live_project_detail, normalize_rootdata_url, parse_rootdata_detail_html, rootdata_fetch_urls
 from score_project import make_funding_round_rows, make_roadmap_event_rows, make_score_rows
 
 
@@ -23,6 +23,11 @@ class ProjectScorerTests(unittest.TestCase):
         left = "https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D"
         right = "https://www.rootdata.com/Projects/detail/Nexus?k=MTE3NDI%3D"
         self.assertEqual(normalize_rootdata_url(left), normalize_rootdata_url(right))
+
+    def test_rootdata_fetch_urls_try_original_cn_before_www(self):
+        urls = rootdata_fetch_urls("https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D")
+        self.assertEqual(urls[0], "https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D")
+        self.assertIn("https://www.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D", urls)
 
     def test_parse_rootdata_detail_html_extracts_project_basics(self):
         html = """
@@ -123,6 +128,29 @@ class ProjectScorerTests(unittest.TestCase):
         self.assertEqual(detail.website, "https://www.nexus.xyz/")
         self.assertEqual(detail.latest_funding_amount_usd, 25_000_000)
         self.assertEqual(detail.fetch_status, "ok")
+
+    def test_fetch_live_project_detail_tries_alternate_rootdata_urls(self):
+        incomplete_html = '<html><head><title>RootData</title></head><body>Please enable JavaScript</body></html>'
+        complete_html = """
+        <h1>Nexus</h1>
+        <a href="https://www.nexus.xyz/">nexus.xyz</a>
+        <script>self.__next_f.push([1,"\\"milestones\\":[{\\"facAmountUs\\":25000000,\\"facDate\\":\\"2024-06-10 00:00:00\\",\\"roundsName\\":{\\"en_value\\":\\"Series A\\"}}]"])</script>
+        """
+        calls = []
+
+        def fake_fetch(url):
+            calls.append(url)
+            return complete_html if "cn.rootdata.com" in url else incomplete_html
+
+        with patch("live_project_fetcher.fetch_text", side_effect=fake_fetch), patch(
+            "live_project_fetcher.fetch_text_with_curl",
+            return_value=incomplete_html,
+        ), patch("live_project_fetcher.fetch_text_with_browser", return_value=incomplete_html, create=True):
+            detail = fetch_live_project_detail("https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D", fetch_followers=False)
+
+        self.assertIn("cn.rootdata.com", calls[0])
+        self.assertEqual(detail.project_name, "Nexus")
+        self.assertEqual(detail.latest_funding_amount_usd, 25_000_000)
 
     def test_fetch_live_project_detail_marks_incomplete_payload(self):
         incomplete_html = '<html><head><title>RootData</title></head><body>Please enable JavaScript</body></html>'
