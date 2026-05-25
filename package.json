@@ -9,7 +9,11 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
+  "engines": {
+    "node": "22.x"
+  },
   "dependencies": {
+    "@sparticuz/chromium": "^148.0.0",
     "playwright-core": "^1.59.1"
   }
 }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import mimetypes
 import os
@@ -28,6 +29,7 @@ from live_project_fetcher import normalize_rootdata_url
 
 ROOT = Path(__file__).resolve().parent
 WEB_DIR = ROOT / "web"
+GITHUB_HISTORY_PATH = "data/project_scores.jsonl"
 
 
 def runtime_workbook_path() -> Path:
@@ -120,22 +122,115 @@ def score_payload(data: dict[str, Any]) -> dict[str, Any]:
     payload = parse_score_payload(data)
     args = namespace_from_payload(payload)
     assessment = build_assessment(args)
-    history = append_history(history_path_for(payload.workbook), assessment)
-    benchmarks = load_benchmarks(payload.benchmark_csv)
-    write_workbook(payload.workbook, history, benchmarks)
+    assessment.update(exchange_progress(assessment.get("roadmap_events", [])) if payload.no_live else project_exchange_progress(assessment))
+    if github_storage_config():
+        history = append_github_history(assessment)
+        workbook = github_storage_label()
+    else:
+        history = append_history(history_path_for(payload.workbook), assessment)
+        benchmarks = load_benchmarks(payload.benchmark_csv)
+        write_workbook(payload.workbook, history, benchmarks)
+        workbook = str(payload.workbook)
     return {
         "ok": True,
         "assessment": assessment,
-        "workbook": str(payload.workbook),
+        "workbook": workbook,
         "history_count": len(history),
     }
 
 
 def read_history_rows(workbook: Path | None = None) -> list[dict[str, Any]]:
+    if workbook is None and github_storage_config():
+        return read_github_history()
     path = history_path_for(workbook or runtime_workbook_path())
     if not path.exists():
         return []
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def github_storage_config() -> dict[str, str] | None:
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    owner = (
+        os.environ.get("GITHUB_REPO_OWNER", "").strip()
+        or os.environ.get("VERCEL_GIT_REPO_OWNER", "").strip()
+        or "bella07021"
+    )
+    repo = (
+        os.environ.get("GITHUB_REPO_NAME", "").strip()
+        or os.environ.get("VERCEL_GIT_REPO_SLUG", "").strip()
+        or "crypto-project-reseach"
+    )
+    branch = os.environ.get("GITHUB_BRANCH", "").strip() or "main"
+    path = os.environ.get("GITHUB_HISTORY_PATH", "").strip() or GITHUB_HISTORY_PATH
+    if not token or not owner or not repo:
+        return None
+    return {"token": token, "owner": owner, "repo": repo, "branch": branch, "path": path}
+
+
+def github_storage_label() -> str:
+    config = github_storage_config()
+    if not config:
+        return str(runtime_workbook_path())
+    return f"github://{config['owner']}/{config['repo']}/{config['path']}"
+
+
+def github_contents_request(config: dict[str, str], method: str, payload: dict[str, Any] | None = None) -> Any:
+    url = f"https://api.github.com/repos/{config['owner']}/{config['repo']}/contents/{config['path']}"
+    if method == "GET":
+        url = f"{url}?ref={config['branch']}"
+    body = json.dumps(payload).encode("utf-8") if payload is not None else None
+    request = Request(
+        url,
+        data=body,
+        method=method,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {config['token']}",
+            "Content-Type": "application/json",
+            "User-Agent": "crypto-project-scoring",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    context = ssl._create_unverified_context()
+    with urlopen(request, timeout=12, context=context) as response:
+        return json.loads(response.read().decode("utf-8", errors="ignore") or "{}")
+
+
+def read_github_history_with_sha() -> tuple[list[dict[str, Any]], str | None]:
+    config = github_storage_config()
+    if not config:
+        return [], None
+    try:
+        payload = github_contents_request(config, "GET")
+    except Exception:
+        return [], None
+    encoded = str(payload.get("content") or "")
+    text = base64.b64decode(encoded).decode("utf-8", errors="ignore") if encoded else ""
+    rows = [json.loads(line) for line in text.splitlines() if line.strip()]
+    return rows, payload.get("sha")
+
+
+def read_github_history() -> list[dict[str, Any]]:
+    rows, _ = read_github_history_with_sha()
+    return rows
+
+
+def append_github_history(assessment: dict[str, Any]) -> list[dict[str, Any]]:
+    config = github_storage_config()
+    if not config:
+        return [assessment]
+    rows, sha = read_github_history_with_sha()
+    rows.append(assessment)
+    content = "".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows)
+    payload: dict[str, Any] = {
+        "message": f"Add score for {assessment.get('token_ticker') or assessment.get('project_name') or assessment.get('x_handle')}",
+        "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+        "branch": config["branch"],
+    }
+    if sha:
+        payload["sha"] = sha
+    github_contents_request(config, "PUT", payload)
+    return rows
 
 
 EXCHANGE_SCORE_RULES = [
@@ -179,9 +274,6 @@ def slugify_project_name(value: str) -> str:
 
 
 def fetch_cmc_web_market_pairs(project_name: str, token_ticker: str) -> list[dict[str, Any]]:
-    if os.environ.get("VERCEL"):
-        return []
-
     slug = slugify_project_name(project_name)
     symbol = token_ticker.upper().strip()
     if not slug:
@@ -338,6 +430,31 @@ def exchange_progress(roadmap_events: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def project_exchange_progress(row: dict[str, Any]) -> dict[str, Any]:
+    cmc_pairs = fetch_cmc_web_market_pairs(
+        str(row.get("project_name", "")),
+        str(row.get("token_ticker") or row.get("project_name") or ""),
+    )
+    if not cmc_pairs:
+        cmc_pairs = fetch_cmc_market_pairs(
+            str(row.get("project_name", "")),
+            str(row.get("token_ticker") or row.get("project_name") or ""),
+        )
+    return exchange_progress_from_cmc(cmc_pairs) if cmc_pairs else exchange_progress(row.get("roadmap_events", []))
+
+
+def cached_exchange_progress(row: dict[str, Any]) -> dict[str, Any] | None:
+    if "exchange_score" not in row:
+        return None
+    return {
+        "exchange_score": row.get("exchange_score", 0),
+        "exchange_progress": row.get("exchange_progress", row.get("exchange_score", 0)),
+        "exchange_raw_score": row.get("exchange_raw_score", 0),
+        "exchange_source": row.get("exchange_source", "cached"),
+        "listed_exchanges": row.get("listed_exchanges", []),
+    }
+
+
 def dashboard_rows(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     latest: dict[str, dict[str, Any]] = {}
     for row in history:
@@ -345,16 +462,7 @@ def dashboard_rows(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
         latest[key] = row
     rows = []
     for row in latest.values():
-        cmc_pairs = fetch_cmc_web_market_pairs(
-            str(row.get("project_name", "")),
-            str(row.get("token_ticker") or row.get("project_name") or ""),
-        )
-        if not cmc_pairs:
-            cmc_pairs = fetch_cmc_market_pairs(
-                str(row.get("project_name", "")),
-                str(row.get("token_ticker") or row.get("project_name") or ""),
-            )
-        progress = exchange_progress_from_cmc(cmc_pairs) if cmc_pairs else exchange_progress(row.get("roadmap_events", []))
+        progress = cached_exchange_progress(row) or exchange_progress(row.get("roadmap_events", []))
         rows.append(
             {
                 "token_ticker": row.get("token_ticker") or row.get("project_name") or row.get("x_handle") or "--",

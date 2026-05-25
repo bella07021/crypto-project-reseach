@@ -6,10 +6,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from web_app import (
+    append_github_history,
     dashboard_rows,
     exchange_progress,
     exchange_progress_from_cmc,
-    fetch_cmc_web_market_pairs,
     parse_score_payload,
     score_payload,
 )
@@ -45,21 +45,22 @@ class WebAppTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            result = score_payload(
-                {
-                    "x_handle": "DemoX",
-                    "rootdata_url": "https://rootdata.example/demo",
-                    "team_raw_score": "80",
-                    "team_background": "international",
-                    "funding_amount_usd": "500000000",
-                    "funding_date": "2026-05-01",
-                    "bucket": "infra",
-                    "no_live": True,
-                    "benchmark_csv": str(benchmark),
-                    "workbook": str(workbook),
-                    "today": "2026-05-22",
-                }
-            )
+            with patch.dict(os.environ, {"GITHUB_TOKEN": ""}):
+                result = score_payload(
+                    {
+                        "x_handle": "DemoX",
+                        "rootdata_url": "https://rootdata.example/demo",
+                        "team_raw_score": "80",
+                        "team_background": "international",
+                        "funding_amount_usd": "500000000",
+                        "funding_date": "2026-05-01",
+                        "bucket": "infra",
+                        "no_live": True,
+                        "benchmark_csv": str(benchmark),
+                        "workbook": str(workbook),
+                        "today": "2026-05-22",
+                    }
+                )
 
             self.assertTrue(result["ok"])
             self.assertEqual(result["assessment"]["x_handle"], "DemoX")
@@ -167,9 +168,46 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(progress["exchange_score"], 41.67)
         self.assertEqual(progress["listed_exchanges"], ["Coinbase", "Bitget", "KuCoin", "MEXC", "Kraken"])
 
-    def test_cmc_web_scrape_is_skipped_on_vercel(self):
-        with patch.dict(os.environ, {"VERCEL": "1"}):
-            self.assertEqual(fetch_cmc_web_market_pairs("Sui", "SUI"), [])
+    def test_github_history_append_creates_contents_payload(self):
+        captured = {}
+
+        class FakeResponse:
+            def __init__(self, payload):
+                self.payload = payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+            def read(self):
+                return json.dumps(self.payload).encode("utf-8")
+
+        def fake_urlopen(request, timeout=0, context=None):
+            if request.get_method() == "GET":
+                raise OSError("not found")
+            captured["url"] = request.full_url
+            captured["payload"] = json.loads(request.data.decode("utf-8"))
+            return FakeResponse({"content": {}, "sha": "new-sha"})
+
+        with patch.dict(
+            os.environ,
+            {
+                "GITHUB_TOKEN": "token",
+                "GITHUB_REPO_OWNER": "bella07021",
+                "GITHUB_REPO_NAME": "crypto-project-reseach",
+                "GITHUB_BRANCH": "main",
+                "GITHUB_HISTORY_PATH": "data/project_scores.jsonl",
+            },
+        ), patch("web_app.urlopen", fake_urlopen):
+            rows = append_github_history({"x_handle": "DemoX", "token_ticker": "DEMO"})
+
+        self.assertEqual(rows, [{"x_handle": "DemoX", "token_ticker": "DEMO"}])
+        self.assertEqual(captured["payload"]["branch"], "main")
+        decoded = __import__("base64").b64decode(captured["payload"]["content"]).decode("utf-8")
+        self.assertIn('"token_ticker": "DEMO"', decoded)
+        self.assertIn("/repos/bella07021/crypto-project-reseach/contents/data/project_scores.jsonl", captured["url"])
 
 
 if __name__ == "__main__":

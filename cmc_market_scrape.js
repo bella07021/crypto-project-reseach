@@ -10,13 +10,25 @@ if (!slug) {
   process.exit(1);
 }
 
-async function main() {
-  const context = await chromium.launchPersistentContext(".cmc-chrome-profile", {
+async function launchContext() {
+  if (process.env.VERCEL) {
+    const serverlessChromium = require("@sparticuz/chromium");
+    return chromium.launchPersistentContext("/tmp/cmc-chrome-profile", {
+      executablePath: await serverlessChromium.executablePath(),
+      headless: true,
+      args: serverlessChromium.args,
+    });
+  }
+
+  return chromium.launchPersistentContext(".cmc-chrome-profile", {
     executablePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     headless: true,
     args: ["--disable-blink-features=AutomationControlled"],
   });
+}
 
+async function main() {
+  const context = await launchContext();
   const page = context.pages()[0] || (await context.newPage());
   await page.goto(`https://coinmarketcap.com/currencies/${slug}/#Markets`, {
     waitUntil: "domcontentloaded",
