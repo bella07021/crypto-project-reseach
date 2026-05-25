@@ -193,6 +193,28 @@ class ProjectScorerTests(unittest.TestCase):
         self.assertIn("url=https%3A%2F%2Fcn.rootdata.com", captured["url"])
         self.assertEqual(captured["timeout"], 65)
 
+    def test_vercel_browser_endpoint_url_uses_automation_bypass_secret(self):
+        captured = {}
+
+        def fake_fetch(url, retries=1, timeout=65):
+            captured["url"] = url
+            return "<html></html>"
+
+        with patch.dict(
+            "os.environ",
+            {
+                "VERCEL_URL": "example.vercel.app",
+                "VERCEL_AUTOMATION_BYPASS_SECRET": "secret value",
+            },
+        ), patch(
+            "live_project_fetcher.fetch_text",
+            side_effect=fake_fetch,
+        ):
+            fetch_text_with_vercel_browser("https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D")
+
+        self.assertIn("x-vercel-protection-bypass=secret+value", captured["url"])
+        self.assertIn("x-vercel-set-bypass-cookie=true", captured["url"])
+
     def test_fetch_live_project_detail_tries_alternate_rootdata_urls(self):
         incomplete_html = '<html><head><title>RootData</title></head><body>Please enable JavaScript</body></html>'
         complete_html = """

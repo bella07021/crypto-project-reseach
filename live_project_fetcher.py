@@ -178,7 +178,12 @@ def fetch_text_with_vercel_browser(url: str) -> str:
         raise RuntimeError("VERCEL_URL unavailable")
     if not host.startswith(("http://", "https://")):
         host = f"https://{host}"
-    request_url = f"{host.rstrip('/')}/api/rootdata-browser?{urlencode({'url': url})}"
+    params = {"url": url}
+    bypass_secret = os.environ.get("VERCEL_AUTOMATION_BYPASS_SECRET", "").strip()
+    if bypass_secret:
+        params["x-vercel-protection-bypass"] = bypass_secret
+        params["x-vercel-set-bypass-cookie"] = "true"
+    request_url = f"{host.rstrip('/')}/api/rootdata-browser?{urlencode(params)}"
     return fetch_text(request_url, retries=1, timeout=65)
 
 
