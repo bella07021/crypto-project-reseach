@@ -45,6 +45,32 @@ class RequestWatcherTests(unittest.TestCase):
         self.assertEqual(writes[-1][0][0]["project_name"], "Nexus")
         self.assertEqual(writes[-1][0][0]["total_score"], 48.02)
 
+    def test_process_next_request_preserves_manual_identity_over_assessment(self):
+        writes = []
+        requests = [
+            {
+                "request_id": "req1",
+                "status": "pending",
+                "token_ticker": "CTR",
+                "project_name": "Citrea",
+                "x_handle": "citrea_xyz",
+                "rootdata_url": "https://cn.rootdata.com/projects/detail/Citrea?k=MTEyNTk%3D",
+            }
+        ]
+
+        with patch("request_watcher.read_github_requests_with_sha", return_value=(requests, "sha")), patch(
+            "request_watcher.write_github_requests",
+            side_effect=lambda rows, message, sha=None: writes.append(([dict(row) for row in rows], message, sha)),
+        ), patch(
+            "request_watcher.score_payload",
+            return_value={"assessment": {"token_ticker": "", "project_name": "Citrea", "total_score": 35.88}},
+        ):
+            processed = process_next_request()
+
+        self.assertTrue(processed)
+        self.assertEqual(writes[-1][0][0]["token_ticker"], "CTR")
+        self.assertEqual(writes[-1][0][0]["project_name"], "Citrea")
+
     def test_process_next_request_marks_failed_on_error(self):
         writes = []
         requests = [

@@ -827,7 +827,32 @@ def request_dashboard_rows(requests: list[dict[str, Any]], history: list[dict[st
 
 
 def combined_dashboard_rows(history: list[dict[str, Any]], requests: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return request_dashboard_rows(requests, history) + dashboard_rows(history)
+    request_overrides: dict[str, dict[str, str]] = {}
+    for request in requests:
+        request_key = project_request_key(str(request.get("rootdata_url", "")), str(request.get("x_handle", "")))
+        if not request_key:
+            continue
+        token_ticker = str(request.get("token_ticker") or "").strip()
+        project_name = str(request.get("project_name") or "").strip()
+        if token_ticker or project_name:
+            request_overrides[request_key] = {
+                "token_ticker": token_ticker,
+                "project_name": project_name,
+            }
+
+    rows = dashboard_rows(history)
+    for row in rows:
+        request_key = project_request_key(str(row.get("rootdata_url", "")), str(row.get("x_handle", "")))
+        override = request_overrides.get(request_key)
+        if not override:
+            continue
+        if override.get("token_ticker"):
+            row["token_ticker"] = override["token_ticker"]
+            row["assessment"]["token_ticker"] = override["token_ticker"]
+        if override.get("project_name"):
+            row["project_name"] = override["project_name"]
+            row["assessment"]["project_name"] = override["project_name"]
+    return request_dashboard_rows(requests, history) + rows
 
 
 def find_assessment_for_request(request: dict[str, Any], history: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -844,10 +869,23 @@ def find_assessment_for_request(request: dict[str, Any], history: list[dict[str,
         row_key = project_request_key(str(row.get("rootdata_url", "")), str(row.get("x_handle", "")))
         row_handle = str(row.get("x_handle", "")).strip().lstrip("@").lower()
         if request_key and request_key == row_key:
-            return row
+            return apply_request_identity_override(row, request)
         if request_handle and request_handle == row_handle:
-            return row
+            return apply_request_identity_override(row, request)
     return None
+
+
+def apply_request_identity_override(assessment: dict[str, Any], request: dict[str, Any]) -> dict[str, Any]:
+    token_ticker = str(request.get("token_ticker") or "").strip()
+    project_name = str(request.get("project_name") or "").strip()
+    if not token_ticker and not project_name:
+        return assessment
+    result = dict(assessment)
+    if token_ticker:
+        result["token_ticker"] = token_ticker
+    if project_name:
+        result["project_name"] = project_name
+    return result
 
 
 def request_status_payload(

@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from web_app import (
     append_github_history,
+    combined_dashboard_rows,
     create_project_request,
     dashboard_rows,
     request_status_payload,
@@ -529,6 +530,60 @@ class WebAppTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["request"]["status"], "done")
         self.assertEqual(payload["assessment"]["token_ticker"], "NEX")
+
+    def test_request_status_payload_overrides_assessment_identity_from_request(self):
+        requests = [
+            {
+                "request_id": "req1",
+                "status": "done",
+                "token_ticker": "CTR",
+                "project_name": "Citrea",
+                "x_handle": "citrea_xyz",
+                "rootdata_url": "https://cn.rootdata.com/projects/detail/Citrea?k=MTEyNTk%3D",
+            }
+        ]
+        history = [
+            {
+                "x_handle": "citrea_xyz",
+                "rootdata_url": "https://www.rootdata.com/Projects/detail/Citrea?k=MTEyNTk%3D",
+                "project_name": "Citrea",
+                "token_ticker": "",
+                "total_score": 35.88,
+            }
+        ]
+
+        payload = request_status_payload("req1", requests, history)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["assessment"]["token_ticker"], "CTR")
+        self.assertEqual(payload["assessment"]["project_name"], "Citrea")
+
+    def test_combined_dashboard_rows_overrides_history_identity_from_done_request(self):
+        rows = combined_dashboard_rows(
+            [
+                {
+                    "x_handle": "citrea_xyz",
+                    "rootdata_url": "https://www.rootdata.com/Projects/detail/Citrea?k=MTEyNTk%3D",
+                    "project_name": "Citrea",
+                    "token_ticker": "",
+                    "total_score": 35.88,
+                }
+            ],
+            [
+                {
+                    "request_id": "req1",
+                    "status": "done",
+                    "token_ticker": "CTR",
+                    "project_name": "Citrea",
+                    "x_handle": "citrea_xyz",
+                    "rootdata_url": "https://cn.rootdata.com/projects/detail/Citrea?k=MTEyNTk%3D",
+                }
+            ],
+        )
+
+        self.assertEqual(rows[0]["token_ticker"], "CTR")
+        self.assertEqual(rows[0]["project_name"], "Citrea")
+        self.assertEqual(rows[0]["assessment"]["token_ticker"], "CTR")
 
     def test_request_status_payload_does_not_return_old_assessment_for_refresh_request(self):
         requests = [

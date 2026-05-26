@@ -37,8 +37,8 @@ def process_next_request() -> bool:
         )
         assessment = result.get("assessment", {})
         request["status"] = "done"
-        request["token_ticker"] = assessment.get("token_ticker") or request.get("token_ticker") or assessment.get("project_name") or assessment.get("x_handle")
-        request["project_name"] = assessment.get("project_name") or request.get("project_name", "")
+        request["token_ticker"] = request.get("token_ticker") or assessment.get("token_ticker") or assessment.get("project_name") or assessment.get("x_handle")
+        request["project_name"] = request.get("project_name") or assessment.get("project_name") or ""
         request["total_score"] = assessment.get("total_score", 0)
         request["completed_at"] = now_iso()
         request.pop("error", None)
