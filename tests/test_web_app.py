@@ -263,6 +263,27 @@ class WebAppTests(unittest.TestCase):
 
         self.assertEqual(assessment["tge_date"], "2026-05-25")
 
+    def test_dashboard_rows_backfills_known_icodrops_airdrop_date(self):
+        rows = dashboard_rows(
+            [
+                {
+                    "project_name": "Solstice",
+                    "x_handle": "solsticefi",
+                    "rootdata_url": "https://cn.rootdata.com/projects/detail/Solstice?k=MTQ0NjI%3D",
+                    "total_score": 46.1,
+                    "tge_status": "已 TGE",
+                    "tge_method": "Binance Alpha Airdrop",
+                    "tge_date": "",
+                    "tge_evidence_links": [
+                        {"text": "Binance Alpha Airdrop", "url": "https://icodrops.com/solstice/"}
+                    ],
+                }
+            ]
+        )
+
+        self.assertEqual(rows[0]["tge_date"], "2026-05-25")
+        self.assertEqual(rows[0]["assessment"]["tge_date"], "2026-05-25")
+
     def test_github_history_append_creates_contents_payload(self):
         captured = {}
 

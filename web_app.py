@@ -154,11 +154,11 @@ def score_payload(data: dict[str, Any]) -> dict[str, Any]:
 
 def read_history_rows(workbook: Path | None = None) -> list[dict[str, Any]]:
     if workbook is None and github_storage_config():
-        return read_github_history()
+        return [hydrate_cached_assessment(row) for row in read_github_history()]
     path = history_path_for(workbook or runtime_workbook_path())
     if not path.exists():
         return []
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    return [hydrate_cached_assessment(json.loads(line)) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def github_storage_config(path: str | None = None) -> dict[str, str] | None:
@@ -635,6 +635,35 @@ def apply_icodrops_tge_signal_from_web(assessment: dict[str, Any]) -> None:
     apply_icodrops_tge_signal(assessment, html, url)
 
 
+def has_binance_alpha_airdrop_evidence(row: dict[str, Any]) -> bool:
+    method = str(row.get("tge_method", ""))
+    if "Binance Alpha Airdrop" in method:
+        return True
+    for link in row.get("tge_evidence_links", []) or []:
+        text = str(link.get("text", ""))
+        url = str(link.get("url", ""))
+        if "Binance Alpha Airdrop" in text or "icodrops.com" in url:
+            return True
+    return False
+
+
+def hydrate_cached_assessment(row: dict[str, Any]) -> dict[str, Any]:
+    hydrated = dict(row)
+    if (
+        not hydrated.get("tge_date")
+        and hydrated.get("tge_status") == "已 TGE"
+        and has_binance_alpha_airdrop_evidence(hydrated)
+    ):
+        url = icodrops_url_for_assessment(hydrated)
+        hydrated["tge_date"] = known_icodrops_airdrop_date(hydrated, url)
+        if hydrated["tge_date"]:
+            links = hydrated.setdefault("tge_evidence_links", [])
+            for link in links:
+                if str(link.get("text", "")) == "Binance Alpha Airdrop":
+                    link["text"] = f"Binance Alpha Airdrop active from {datetime.fromisoformat(hydrated['tge_date']).strftime('%B %-d, %Y')}"
+    return hydrated
+
+
 def cached_exchange_progress(row: dict[str, Any]) -> dict[str, Any] | None:
     if "exchange_score" not in row:
         return None
@@ -650,6 +679,7 @@ def cached_exchange_progress(row: dict[str, Any]) -> dict[str, Any] | None:
 def dashboard_rows(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     latest: dict[str, dict[str, Any]] = {}
     for row in history:
+        row = hydrate_cached_assessment(row)
         key = normalize_rootdata_url(str(row.get("rootdata_url", ""))) or str(row.get("x_handle", "")).lower()
         latest[key] = row
     rows = []
@@ -735,6 +765,7 @@ def find_assessment_for_request(request: dict[str, Any], history: list[dict[str,
     request_handle = str(request.get("x_handle", "")).strip().lstrip("@").lower()
     requested_at = parse_iso_datetime(str(request.get("requested_at", "")))
     for row in reversed(history):
+        row = hydrate_cached_assessment(row)
         assessed_at = parse_iso_datetime(str(row.get("assessed_at", "")))
         if requested_at and assessed_at and assessed_at < requested_at:
             continue
