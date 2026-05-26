@@ -17,6 +17,7 @@ from project_scorer import (
 from live_project_fetcher import (
     enrich_team_members_from_linkedin,
     fetch_live_project_detail,
+    fetch_x_signal_htmls,
     fetch_text_with_vercel_browser,
     normalize_rootdata_url,
     parse_rootdata_detail_html,
@@ -109,7 +110,7 @@ class ProjectScorerTests(unittest.TestCase):
         self.assertEqual(len(detail.team_members), 3)
         self.assertEqual(detail.team_members[0]["linkedin_url"], "https://linkedin.com/in/ben")
 
-    def test_parse_rootdata_detail_html_does_not_link_untge_rootdata_signal_evidence(self):
+    def test_parse_rootdata_detail_html_does_not_score_untge_rootdata_signal_evidence(self):
         html = """
         <h1>Solstice</h1>
         <a href="https://x.com/solsticefi">X</a>
@@ -119,7 +120,8 @@ class ProjectScorerTests(unittest.TestCase):
         detail = parse_rootdata_detail_html(html)
 
         self.assertEqual(detail.tge_status, "未 TGE")
-        self.assertGreaterEqual(detail.tge_probability, 80)
+        self.assertEqual(detail.tge_probability, 0)
+        self.assertEqual(detail.tge_evidence, [])
         self.assertEqual(detail.tge_evidence_links, [])
 
     def test_supplement_tge_evidence_from_project_x_html_links_own_statuses(self):
@@ -155,6 +157,56 @@ class ProjectScorerTests(unittest.TestCase):
             ],
         )
 
+    def test_supplement_tge_evidence_from_project_x_html_ignores_collab_airdrop(self):
+        detail = parse_rootdata_detail_html(
+            """
+            <h1>Citrea</h1>
+            <a href="https://x.com/citrea_xyz">X</a>
+            """
+        )
+        x_html = """
+        <article>We partnered with OtherProject for a collab giveaway airdrop
+        https://x.com/citrea_xyz/status/1234567890123456789</article>
+        """
+
+        supplement_tge_evidence_from_x_html(detail, x_html)
+
+        self.assertEqual(detail.tge_evidence, [])
+        self.assertEqual(detail.tge_evidence_links, [])
+
+    def test_supplement_tge_evidence_from_project_x_html_accepts_project_airdrop(self):
+        detail = parse_rootdata_detail_html(
+            """
+            <h1>Citrea</h1>
+            <a href="https://x.com/citrea_xyz">X</a>
+            """
+        )
+        x_html = """
+        <article>Citrea points season airdrop eligibility and claim details are live
+        https://x.com/citrea_xyz/status/2234567890123456789</article>
+        """
+
+        supplement_tge_evidence_from_x_html(detail, x_html)
+
+        self.assertIn("出现积分/空投/赛季活动相关表述", detail.tge_evidence)
+        self.assertEqual(
+            detail.tge_evidence_links,
+            [{"text": "出现积分/空投/赛季活动相关表述", "url": "https://x.com/citrea_xyz/status/2234567890123456789"}],
+        )
+
+    def test_fetch_x_signal_htmls_uses_project_search_pages(self):
+        seen_urls = []
+
+        def fake_fetch(url, **kwargs):
+            seen_urls.append(url)
+            return "<html></html>"
+
+        with patch("live_project_fetcher.fetch_text", side_effect=fake_fetch):
+            htmls = fetch_x_signal_htmls("citrea_xyz")
+
+        self.assertEqual(len(htmls), 5)
+        self.assertTrue(any("from%3Acitrea_xyz+airdrop" in url for url in seen_urls))
+
     def test_parse_rootdata_detail_html_ignores_other_project_twitter_signal_links(self):
         html = """
         <h1>Citrea</h1>
@@ -166,7 +218,7 @@ class ProjectScorerTests(unittest.TestCase):
 
         self.assertEqual(detail.x_handle, "citrea_xyz")
         self.assertEqual(detail.tge_status, "未 TGE")
-        self.assertGreaterEqual(detail.tge_probability, 80)
+        self.assertEqual(detail.tge_probability, 0)
         self.assertEqual(detail.tge_evidence_links, [])
 
     def test_fetch_live_project_detail_refetches_incomplete_rootdata_html(self):

@@ -342,6 +342,63 @@ def nearest_x_status_url(text: str, tokens: list[str], allowed_handle: str = "")
     return unescape(best.group(0))
 
 
+def context_around_tokens(text: str, tokens: list[str], radius: int = 260) -> str:
+    lower = text.lower()
+    positions = [lower.find(token.lower()) for token in tokens if lower.find(token.lower()) != -1]
+    if not positions:
+        return text[: radius * 2]
+    position = min(positions)
+    start = max(0, position - radius)
+    end = min(len(text), position + radius)
+    return text[start:end]
+
+
+def is_project_airdrop_context(detail: LiveProjectDetail, text: str) -> bool:
+    context = context_around_tokens(text, ["airdrop", "points", "season", "积分", "空投", "赛季"]).lower()
+    small_collab_tokens = [
+        "giveaway",
+        "raffle",
+        "campaign with",
+        "partner giveaway",
+        "collab",
+        "collaboration",
+        "allowlist giveaway",
+        "whitelist giveaway",
+        "抽奖",
+        "联合",
+        "白名单",
+    ]
+    identity_tokens = [
+        detail.project_name.lower(),
+        detail.token_ticker.lower(),
+    ]
+    distribution_tokens = [
+        "token",
+        "points",
+        "season",
+        "claim",
+        "eligibility",
+        "eligible",
+        "allocation",
+        "rewards",
+        "mainnet",
+        "genesis",
+        "airdrop checker",
+        "代币",
+        "积分",
+        "赛季",
+        "领取",
+        "资格",
+        "分配",
+    ]
+    identity_tokens = [token for token in identity_tokens if token]
+    distribution_tokens = [token for token in distribution_tokens if token]
+    has_distribution_context = any(token in context for token in distribution_tokens)
+    if any(token in context for token in small_collab_tokens) and not has_distribution_context:
+        return False
+    return has_distribution_context and (not identity_tokens or any(token in context for token in identity_tokens + distribution_tokens))
+
+
 def compute_tge_probability(
     detail: LiveProjectDetail,
     text: str,
@@ -367,7 +424,7 @@ def compute_tge_probability(
         url = nearest_x_status_url(text, tokenomics_tokens, detail.x_handle) if include_links else ""
         if url:
             evidence_links.append({"text": label, "url": url})
-    if any(token in lower for token in airdrop_tokens):
+    if any(token in lower for token in airdrop_tokens) and is_project_airdrop_context(detail, text):
         score += 30
         label = "出现积分/空投/赛季活动相关表述"
         evidence.append(label)
@@ -382,6 +439,17 @@ def compute_tge_probability(
         if url:
             evidence_links.append({"text": label, "url": url})
     return min(score, 95), evidence, evidence_links
+
+
+def compute_rootdata_tge_probability(detail: LiveProjectDetail) -> tuple[int, list[str], list[dict[str, str]]]:
+    score = 0
+    evidence: list[str] = []
+    if detail.funding_rounds:
+        latest = max(detail.funding_rounds, key=lambda row: str(row.get("date", "")))
+        if latest.get("date"):
+            score += 20
+            evidence.append(f"最近融资轮次: {latest.get('round')} {latest.get('date')}")
+    return score, evidence, []
 
 
 def supplement_tge_evidence_from_x_html(detail: LiveProjectDetail, html: str) -> None:
@@ -733,11 +801,7 @@ def parse_rootdata_detail_html(html: str) -> LiveProjectDetail:
             )
     else:
         detail.tge_status = "未 TGE"
-        detail.tge_probability, detail.tge_evidence, detail.tge_evidence_links = compute_tge_probability(
-            detail,
-            html,
-            include_links=False,
-        )
+        detail.tge_probability, detail.tge_evidence, detail.tge_evidence_links = compute_rootdata_tge_probability(detail)
         detail.tge_method = "未 TGE"
 
     if detail.tge_date:
@@ -819,6 +883,26 @@ def fetch_x_profile_html(handle: str) -> tuple[str, str]:
         except Exception as exc:
             last_error = str(exc)
     return "", last_error
+
+
+def fetch_x_signal_htmls(handle: str) -> list[str]:
+    normalized = handle.strip().lstrip("@")
+    if not normalized:
+        return []
+    urls = [
+        f"https://x.com/{quote(normalized)}",
+        f"https://x.com/search?{urlencode({'q': f'from:{normalized} tokenomics', 'src': 'typed_query'})}",
+        f"https://x.com/search?{urlencode({'q': f'from:{normalized} airdrop', 'src': 'typed_query'})}",
+        f"https://x.com/search?{urlencode({'q': f'from:{normalized} points OR season', 'src': 'typed_query'})}",
+        f"https://x.com/search?{urlencode({'q': f'from:{normalized} IDO OR launchpad OR sale', 'src': 'typed_query'})}",
+    ]
+    htmls = []
+    for url in urls:
+        try:
+            htmls.append(fetch_text(url, retries=1, timeout=12))
+        except Exception:
+            continue
+    return htmls
 
 
 def fetch_live_project_detail(
@@ -917,10 +1001,9 @@ def fetch_live_project_detail(
     if x_handle and normalize_handle_from_url(f"https://x.com/{x_handle}") != detail.x_handle:
         detail.x_handle = x_handle.strip().lstrip("@")
         detail.x_url = f"https://x.com/{detail.x_handle}"
-    x_profile_html = ""
     if detail.x_handle:
-        x_profile_html, _ = fetch_x_profile_html(detail.x_handle)
-        supplement_tge_evidence_from_x_html(detail, x_profile_html)
+        for x_html in fetch_x_signal_htmls(detail.x_handle):
+            supplement_tge_evidence_from_x_html(detail, x_html)
     if fetch_followers and detail.x_handle:
         followers, source = fetch_x_followers(detail.x_handle)
         if followers is not None:
