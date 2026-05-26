@@ -327,25 +327,53 @@ def parse_structured_events(html: str) -> list[dict[str, object]]:
     return sorted(events, key=lambda item: str(item.get("date", "")))
 
 
-def compute_tge_probability(detail: LiveProjectDetail, text: str) -> tuple[int, list[str]]:
+def nearest_x_status_url(text: str, tokens: list[str]) -> str:
+    urls = list(re.finditer(r"https?://(?:www\.)?(?:x|twitter)\.com/[A-Za-z0-9_]+/status/\d+", text, re.I))
+    if not urls:
+        return ""
+    lower = text.lower()
+    token_positions = [lower.find(token.lower()) for token in tokens if lower.find(token.lower()) != -1]
+    if not token_positions:
+        return unescape(urls[0].group(0))
+    best = min(urls, key=lambda match: min(abs(match.start() - position) for position in token_positions))
+    return unescape(best.group(0))
+
+
+def compute_tge_probability(detail: LiveProjectDetail, text: str) -> tuple[int, list[str], list[dict[str, str]]]:
     score = 0
     evidence: list[str] = []
+    evidence_links: list[dict[str, str]] = []
     lower = text.lower()
     if detail.funding_rounds:
         latest = max(detail.funding_rounds, key=lambda row: str(row.get("date", "")))
         if latest.get("date"):
             score += 20
             evidence.append(f"最近融资轮次: {latest.get('round')} {latest.get('date')}")
-    if any(token in lower for token in ["tokenomics", "economic model", "代币经济", "经济模型"]):
+    tokenomics_tokens = ["tokenomics", "economic model", "代币经济", "经济模型"]
+    airdrop_tokens = ["airdrop", "points", "season", "积分", "空投", "赛季"]
+    ido_tokens = ["ido", "launchpad", "sale", "公售"]
+    if any(token in lower for token in tokenomics_tokens):
         score += 30
-        evidence.append("出现代币经济模型相关表述")
-    if any(token in lower for token in ["airdrop", "points", "season", "积分", "空投", "赛季"]):
+        label = "出现代币经济模型相关表述"
+        evidence.append(label)
+        url = nearest_x_status_url(text, tokenomics_tokens)
+        if url:
+            evidence_links.append({"text": label, "url": url})
+    if any(token in lower for token in airdrop_tokens):
         score += 30
-        evidence.append("出现积分/空投/赛季活动相关表述")
-    if any(token in lower for token in ["ido", "launchpad", "sale", "公售"]):
+        label = "出现积分/空投/赛季活动相关表述"
+        evidence.append(label)
+        url = nearest_x_status_url(text, airdrop_tokens)
+        if url:
+            evidence_links.append({"text": label, "url": url})
+    if any(token in lower for token in ido_tokens):
         score += 20
-        evidence.append("出现 IDO/Launchpad/Sale 相关表述")
-    return min(score, 95), evidence
+        label = "出现 IDO/Launchpad/Sale 相关表述"
+        evidence.append(label)
+        url = nearest_x_status_url(text, ido_tokens)
+        if url:
+            evidence_links.append({"text": label, "url": url})
+    return min(score, 95), evidence, evidence_links
 
 
 def extract_meta(html: str, name: str) -> str:
@@ -684,7 +712,7 @@ def parse_rootdata_detail_html(html: str) -> LiveProjectDetail:
             )
     else:
         detail.tge_status = "未 TGE"
-        detail.tge_probability, detail.tge_evidence = compute_tge_probability(detail, html)
+        detail.tge_probability, detail.tge_evidence, detail.tge_evidence_links = compute_tge_probability(detail, html)
         detail.tge_method = "未 TGE"
 
     if detail.tge_date:

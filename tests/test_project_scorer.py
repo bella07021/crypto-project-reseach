@@ -108,6 +108,35 @@ class ProjectScorerTests(unittest.TestCase):
         self.assertEqual(len(detail.team_members), 3)
         self.assertEqual(detail.team_members[0]["linkedin_url"], "https://linkedin.com/in/ben")
 
+    def test_parse_rootdata_detail_html_links_untge_twitter_signal_evidence(self):
+        html = """
+        <h1>Solstice</h1>
+        <a href="https://x.com/solsticefi">X</a>
+        <script>self.__next_f.push([1,"Solstice published tokenomics and airdrop season details at https://x.com/solsticefi/status/1234567890123456789 before IDO sale"])</script>
+        """
+
+        detail = parse_rootdata_detail_html(html)
+
+        self.assertEqual(detail.tge_status, "未 TGE")
+        self.assertGreaterEqual(detail.tge_probability, 80)
+        self.assertEqual(
+            detail.tge_evidence_links,
+            [
+                {
+                    "text": "出现代币经济模型相关表述",
+                    "url": "https://x.com/solsticefi/status/1234567890123456789",
+                },
+                {
+                    "text": "出现积分/空投/赛季活动相关表述",
+                    "url": "https://x.com/solsticefi/status/1234567890123456789",
+                },
+                {
+                    "text": "出现 IDO/Launchpad/Sale 相关表述",
+                    "url": "https://x.com/solsticefi/status/1234567890123456789",
+                },
+            ],
+        )
+
     def test_fetch_live_project_detail_refetches_incomplete_rootdata_html(self):
         incomplete_html = '<html><head><title>RootData</title></head><body>Please enable JavaScript</body></html>'
         complete_html = """

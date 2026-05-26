@@ -13,6 +13,7 @@ from web_app import (
     request_dashboard_rows,
     exchange_progress,
     exchange_progress_from_cmc,
+    project_exchange_progress,
     parse_score_payload,
     score_payload,
 )
@@ -181,6 +182,27 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(progress["exchange_raw_score"], 12.5)
         self.assertEqual(progress["exchange_score"], 41.67)
         self.assertEqual(progress["listed_exchanges"], ["Coinbase", "Bitget", "KuCoin", "MEXC", "Kraken"])
+
+    def test_project_exchange_progress_does_not_filter_cmc_by_project_name_when_ticker_missing(self):
+        captured = {}
+
+        def fake_fetch(project_name, token_ticker):
+            captured["project_name"] = project_name
+            captured["token_ticker"] = token_ticker
+            return [
+                {"exchange": {"name": "Bitget", "slug": "bitget"}, "market_pair": "SLX/USDT", "category": "spot"},
+                {"exchange": {"name": "Gate", "slug": "gate"}, "market_pair": "SLX/USDT", "category": "spot"},
+                {"exchange": {"name": "MEXC", "slug": "mexc"}, "market_pair": "SLX/USDT", "category": "spot"},
+            ]
+
+        with patch("web_app.fetch_cmc_web_market_pairs", side_effect=fake_fetch):
+            progress = project_exchange_progress({"project_name": "Solstice", "token_ticker": ""})
+
+        self.assertEqual(captured["project_name"], "Solstice")
+        self.assertEqual(captured["token_ticker"], "")
+        self.assertEqual(progress["exchange_raw_score"], 4.5)
+        self.assertEqual(progress["exchange_score"], 15.0)
+        self.assertEqual(progress["listed_exchanges"], ["Bitget", "Gate", "MEXC"])
 
     def test_github_history_append_creates_contents_payload(self):
         captured = {}

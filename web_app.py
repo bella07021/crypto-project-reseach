@@ -542,14 +542,15 @@ def exchange_progress(roadmap_events: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def project_exchange_progress(row: dict[str, Any]) -> dict[str, Any]:
+    token_ticker = str(row.get("token_ticker") or "").strip()
     cmc_pairs = fetch_cmc_web_market_pairs(
         str(row.get("project_name", "")),
-        str(row.get("token_ticker") or row.get("project_name") or ""),
+        token_ticker,
     )
     if not cmc_pairs:
         cmc_pairs = fetch_cmc_market_pairs(
             str(row.get("project_name", "")),
-            str(row.get("token_ticker") or row.get("project_name") or ""),
+            token_ticker,
         )
     return exchange_progress_from_cmc(cmc_pairs) if cmc_pairs else exchange_progress(row.get("roadmap_events", []))
 
