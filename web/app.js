@@ -185,10 +185,24 @@ function eventTypeLabel(event, assessment) {
 
 function renderRoadmap(el, assessment) {
   const events = sortedRoadmap(assessment);
+  const exchanges = assessment.listed_exchanges || [];
   el.innerHTML = "";
-  if (!events.length) {
+  if (!events.length && !exchanges.length) {
     el.innerHTML = '<div class="empty-state">暂无上线交易所事件。</div>';
     return;
+  }
+  for (const exchange of exchanges) {
+    const item = document.createElement("div");
+    item.className = "timeline-item";
+    item.innerHTML = `
+      <div class="timeline-type">CMC Markets</div>
+      <div class="timeline-name">${exchange}</div>
+      <div>
+        <div class="timeline-date">${assessment.tge_date || "日期待确认"}</div>
+        <div class="timeline-days">${assessment.exchange_source || "CoinMarketCap"}</div>
+      </div>
+    `;
+    el.appendChild(item);
   }
   for (const event of events) {
     const item = document.createElement("div");
@@ -226,7 +240,9 @@ function renderReport(assessment, workbook) {
   get("fetchStatus").textContent = assessment.fetch_status || "unknown";
   get("tgeStatus").textContent = assessment.tge_status || "--";
   get("tgeProbability").textContent = assessment.tge_status === "已 TGE" ? "已 TGE" : `${integerText(assessment.tge_probability)}%`;
-  get("tgeDate").textContent = assessment.tge_date ? `TGE 日期: ${assessment.tge_date}` : "未 TGE 时为概率估算";
+  get("tgeDate").textContent = assessment.tge_status === "已 TGE"
+    ? `TGE 日期: ${assessment.tge_date || "待确认"}`
+    : "未 TGE 时为概率估算";
   get("tgeMethod").textContent = assessment.tge_method ? `方式: ${assessment.tge_method}` : "方式: --";
   renderList(get("evidenceList"), uniqueEvidence(assessment), "暂无证据。");
   renderTgeEvidence(get("tgeEvidenceList"), assessment);

@@ -13,6 +13,7 @@ from web_app import (
     request_dashboard_rows,
     exchange_progress,
     exchange_progress_from_cmc,
+    apply_exchange_tge_inference,
     project_exchange_progress,
     parse_score_payload,
     score_payload,
@@ -203,6 +204,41 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(progress["exchange_raw_score"], 4.5)
         self.assertEqual(progress["exchange_score"], 15.0)
         self.assertEqual(progress["listed_exchanges"], ["Bitget", "Gate", "MEXC"])
+
+    def test_apply_exchange_tge_inference_marks_project_tge_when_cmc_lists_exchanges(self):
+        assessment = {
+            "tge_status": "未 TGE",
+            "tge_probability": 80,
+            "tge_method": "未 TGE",
+            "tge_date": "",
+            "listed_exchanges": ["Bitget", "Gate", "MEXC"],
+            "exchange_source": "CoinMarketCap Web",
+            "evidence_notes": [],
+        }
+
+        apply_exchange_tge_inference(assessment)
+
+        self.assertEqual(assessment["tge_status"], "已 TGE")
+        self.assertEqual(assessment["tge_probability"], 100)
+        self.assertEqual(assessment["tge_method"], "CMC Markets")
+        self.assertEqual(assessment["tge_date"], "")
+        self.assertIn("CMC markets found listed exchanges: Bitget, Gate, MEXC", assessment["evidence_notes"])
+
+    def test_apply_exchange_tge_inference_uses_existing_rootdata_tge_date(self):
+        assessment = {
+            "tge_status": "未 TGE",
+            "tge_probability": 80,
+            "tge_method": "未 TGE",
+            "tge_date": "",
+            "listed_exchanges": ["Bitget"],
+            "exchange_source": "CoinMarketCap Web",
+            "roadmap_events": [{"type": "TGE", "date": "2026-05-20", "name": "Token live"}],
+            "evidence_notes": [],
+        }
+
+        apply_exchange_tge_inference(assessment)
+
+        self.assertEqual(assessment["tge_date"], "2026-05-20")
 
     def test_github_history_append_creates_contents_payload(self):
         captured = {}

@@ -130,6 +130,7 @@ def score_payload(data: dict[str, Any]) -> dict[str, Any]:
     args = namespace_from_payload(payload)
     assessment = build_assessment(args)
     assessment.update(exchange_progress(assessment.get("roadmap_events", [])) if payload.no_live else project_exchange_progress(assessment))
+    apply_exchange_tge_inference(assessment)
     if github_storage_config():
         history = append_github_history(assessment)
         workbook = github_storage_label()
@@ -555,6 +556,29 @@ def project_exchange_progress(row: dict[str, Any]) -> dict[str, Any]:
     return exchange_progress_from_cmc(cmc_pairs) if cmc_pairs else exchange_progress(row.get("roadmap_events", []))
 
 
+def rootdata_tge_date(row: dict[str, Any]) -> str:
+    for event in row.get("roadmap_events", []) or []:
+        if str(event.get("type", "")) == "TGE" and event.get("date"):
+            return str(event.get("date", ""))
+    return ""
+
+
+def apply_exchange_tge_inference(assessment: dict[str, Any]) -> None:
+    exchanges = [str(exchange) for exchange in assessment.get("listed_exchanges", []) if str(exchange).strip()]
+    if not exchanges:
+        return
+    if assessment.get("tge_status") == "已 TGE":
+        return
+    assessment["tge_status"] = "已 TGE"
+    assessment["tge_probability"] = 100
+    assessment["tge_method"] = "CMC Markets"
+    assessment["tge_date"] = assessment.get("tge_date") or rootdata_tge_date(assessment)
+    notes = assessment.setdefault("evidence_notes", [])
+    note = f"CMC markets found listed exchanges: {', '.join(exchanges)}"
+    if note not in notes:
+        notes.append(note)
+
+
 def cached_exchange_progress(row: dict[str, Any]) -> dict[str, Any] | None:
     if "exchange_score" not in row:
         return None
@@ -594,6 +618,12 @@ def dashboard_rows(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "assessment": row,
             }
         )
+        rows[-1]["assessment"] = {**row, **progress}
+        apply_exchange_tge_inference(rows[-1]["assessment"])
+        rows[-1]["tge_status"] = rows[-1]["assessment"].get("tge_status", rows[-1]["tge_status"])
+        rows[-1]["tge_probability"] = rows[-1]["assessment"].get("tge_probability", rows[-1]["tge_probability"])
+        rows[-1]["tge_date"] = rows[-1]["assessment"].get("tge_date", rows[-1]["tge_date"])
+        rows[-1]["tge_method"] = rows[-1]["assessment"].get("tge_method", rows[-1]["tge_method"])
     return sorted(rows, key=lambda item: float(item.get("total_score") or 0), reverse=True)
 
 
