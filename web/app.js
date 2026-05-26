@@ -147,6 +147,31 @@ function renderList(el, items, emptyText) {
   }
 }
 
+function renderTgeEvidence(el, assessment) {
+  const linkedItems = assessment.tge_evidence_links || [];
+  if (linkedItems.length) {
+    el.innerHTML = "";
+    for (const item of linkedItems) {
+      const li = document.createElement("li");
+      const text = document.createElement("span");
+      text.textContent = item.text || "TGE 相关表述";
+      li.appendChild(text);
+      if (item.url) {
+        li.appendChild(document.createTextNode(" · "));
+        const anchor = document.createElement("a");
+        anchor.href = item.url;
+        anchor.target = "_blank";
+        anchor.rel = "noopener noreferrer";
+        anchor.textContent = "X 链接";
+        li.appendChild(anchor);
+      }
+      el.appendChild(li);
+    }
+    return;
+  }
+  renderList(el, assessment.tge_evidence || [], "暂无 TGE 证据。");
+}
+
 function sortedRoadmap(assessment) {
   return [...(assessment.roadmap_events || [])].sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
 }
@@ -162,7 +187,7 @@ function renderRoadmap(el, assessment) {
   const events = sortedRoadmap(assessment);
   el.innerHTML = "";
   if (!events.length) {
-    el.innerHTML = '<div class="empty-state">暂无路线图或上所事件。</div>';
+    el.innerHTML = '<div class="empty-state">暂无上线交易所事件。</div>';
     return;
   }
   for (const event of events) {
@@ -199,14 +224,12 @@ function renderReport(assessment, workbook) {
   get("fundingReason").textContent = scoreReason("funding", assessment);
   get("socialReason").textContent = scoreReason("social", assessment);
   get("fetchStatus").textContent = assessment.fetch_status || "unknown";
-  get("website").textContent = assessment.website || "--";
-  get("workbook").textContent = workbook || assessment.workbook || "--";
   get("tgeStatus").textContent = assessment.tge_status || "--";
   get("tgeProbability").textContent = assessment.tge_status === "已 TGE" ? "已 TGE" : `${integerText(assessment.tge_probability)}%`;
   get("tgeDate").textContent = assessment.tge_date ? `TGE 日期: ${assessment.tge_date}` : "未 TGE 时为概率估算";
   get("tgeMethod").textContent = assessment.tge_method ? `方式: ${assessment.tge_method}` : "方式: --";
   renderList(get("evidenceList"), uniqueEvidence(assessment), "暂无证据。");
-  renderList(get("tgeEvidenceList"), assessment.tge_evidence || [], "暂无 TGE 证据。");
+  renderTgeEvidence(get("tgeEvidenceList"), assessment);
   renderRoadmap(get("roadmapList"), assessment);
   reportMount.innerHTML = "";
   reportMount.appendChild(fragment);

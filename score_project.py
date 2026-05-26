@@ -143,6 +143,7 @@ def build_assessment(args: argparse.Namespace) -> dict[str, object]:
         "tge_date": live_detail.tge_date.isoformat() if live_detail and live_detail.tge_date else "",
         "tge_method": live_detail.tge_method if live_detail else "",
         "tge_evidence": live_detail.tge_evidence if live_detail else [],
+        "tge_evidence_links": live_detail.tge_evidence_links if live_detail else [],
         "roadmap_events": live_detail.roadmap_events if live_detail else [],
         "evidence_notes": evidence_notes,
         "fetch_status": live_detail.fetch_status if live_detail else "disabled",

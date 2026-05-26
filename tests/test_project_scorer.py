@@ -70,6 +70,15 @@ class ProjectScorerTests(unittest.TestCase):
         self.assertEqual(detail.tge_probability, 100)
         self.assertEqual(str(detail.tge_date), "2026-05-20")
         self.assertEqual(detail.tge_method, "Binance Alpha")
+        self.assertEqual(
+            detail.tge_evidence_links,
+            [
+                {
+                    "text": "NEX is live for trading",
+                    "url": "https://x.com/nexuslabs/status/2057000000000000000",
+                }
+            ],
+        )
         self.assertGreaterEqual(len(detail.roadmap_events), 1)
         self.assertEqual(detail.roadmap_events[0]["name"], "Coinbase listed Nexus（NEX）")
         self.assertEqual(detail.roadmap_events[0]["days_after_tge"], 0)

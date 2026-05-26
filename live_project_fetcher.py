@@ -75,6 +75,7 @@ class LiveProjectDetail:
     tge_date: Optional[date] = None
     tge_method: str = ""
     tge_evidence: list[str] = field(default_factory=list)
+    tge_evidence_links: list[dict[str, str]] = field(default_factory=list)
     roadmap_events: list[dict[str, object]] = field(default_factory=list)
     fetch_status: str = "not_fetched"
     evidence_notes: list[str] = field(default_factory=list)
@@ -674,6 +675,13 @@ def parse_rootdata_detail_html(html: str) -> LiveProjectDetail:
         if detail.token_ticker in KNOWN_TGE_METHOD_OVERRIDES:
             detail.tge_method = KNOWN_TGE_METHOD_OVERRIDES[detail.token_ticker]
         detail.tge_evidence.append(str(tge_events[0].get("name", "")))
+        if str(tge_events[0].get("url", "")).startswith(("https://x.com/", "https://twitter.com/")):
+            detail.tge_evidence_links.append(
+                {
+                    "text": str(tge_events[0].get("name", "")),
+                    "url": str(tge_events[0].get("url", "")),
+                }
+            )
     else:
         detail.tge_status = "未 TGE"
         detail.tge_probability, detail.tge_evidence = compute_tge_probability(detail, html)
