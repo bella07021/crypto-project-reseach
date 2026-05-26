@@ -10,6 +10,50 @@ python3 web_app.py --host 127.0.0.1 --port 8094
 
 Open `http://127.0.0.1:8094/`.
 
+## Local watcher on macOS
+
+The local watcher processes pending project requests from GitHub and writes score results back to the dashboard.
+
+Create the local env file first:
+
+```bash
+cp .env.watcher.example .env.watcher
+```
+
+Edit `.env.watcher` and set `GITHUB_TOKEN` to a fine-grained token with `Contents: Read and write` access to this repository. The real `.env.watcher` file is ignored by git.
+
+Run once by hand:
+
+```bash
+launchd/run_request_watcher.sh
+```
+
+Install it as a macOS LaunchAgent:
+
+```bash
+mkdir -p logs
+chmod +x launchd/run_request_watcher.sh
+cp launchd/com.bella.crypto-score-watcher.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.bella.crypto-score-watcher.plist
+launchctl kickstart -k gui/$(id -u)/com.bella.crypto-score-watcher
+```
+
+Check status and logs:
+
+```bash
+launchctl print gui/$(id -u)/com.bella.crypto-score-watcher
+tail -f logs/request_watcher.out.log
+tail -f logs/request_watcher.err.log
+```
+
+Stop or reinstall:
+
+```bash
+launchctl bootout gui/$(id -u)/com.bella.crypto-score-watcher
+cp launchd/com.bella.crypto-score-watcher.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.bella.crypto-score-watcher.plist
+```
+
 ## Tests
 
 ```bash

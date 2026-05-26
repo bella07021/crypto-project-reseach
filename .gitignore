@@ -11,3 +11,7 @@ build/
 
 .cmc-chrome-profile/
 .rootdata-chrome-profile/
+.x-chrome-profile/
+.env.watcher
+logs/*
+!logs/.gitkeep

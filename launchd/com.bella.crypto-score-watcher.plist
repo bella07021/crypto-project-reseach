@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.bella.crypto-score-watcher</string>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/apple/Documents/New project</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/apple/Documents/New project/launchd/run_request_watcher.sh</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/apple/Documents/New project/logs/request_watcher.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/apple/Documents/New project/logs/request_watcher.err.log</string>
+</dict>
+</plist>
