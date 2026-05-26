@@ -342,7 +342,12 @@ def nearest_x_status_url(text: str, tokens: list[str], allowed_handle: str = "")
     return unescape(best.group(0))
 
 
-def compute_tge_probability(detail: LiveProjectDetail, text: str) -> tuple[int, list[str], list[dict[str, str]]]:
+def compute_tge_probability(
+    detail: LiveProjectDetail,
+    text: str,
+    *,
+    include_links: bool = True,
+) -> tuple[int, list[str], list[dict[str, str]]]:
     score = 0
     evidence: list[str] = []
     evidence_links: list[dict[str, str]] = []
@@ -359,24 +364,37 @@ def compute_tge_probability(detail: LiveProjectDetail, text: str) -> tuple[int, 
         score += 30
         label = "出现代币经济模型相关表述"
         evidence.append(label)
-        url = nearest_x_status_url(text, tokenomics_tokens, detail.x_handle)
+        url = nearest_x_status_url(text, tokenomics_tokens, detail.x_handle) if include_links else ""
         if url:
             evidence_links.append({"text": label, "url": url})
     if any(token in lower for token in airdrop_tokens):
         score += 30
         label = "出现积分/空投/赛季活动相关表述"
         evidence.append(label)
-        url = nearest_x_status_url(text, airdrop_tokens, detail.x_handle)
+        url = nearest_x_status_url(text, airdrop_tokens, detail.x_handle) if include_links else ""
         if url:
             evidence_links.append({"text": label, "url": url})
     if any(token in lower for token in ido_tokens):
         score += 20
         label = "出现 IDO/Launchpad/Sale 相关表述"
         evidence.append(label)
-        url = nearest_x_status_url(text, ido_tokens, detail.x_handle)
+        url = nearest_x_status_url(text, ido_tokens, detail.x_handle) if include_links else ""
         if url:
             evidence_links.append({"text": label, "url": url})
     return min(score, 95), evidence, evidence_links
+
+
+def supplement_tge_evidence_from_x_html(detail: LiveProjectDetail, html: str) -> None:
+    if not html or detail.tge_status != "未 TGE":
+        return
+    probability, evidence, evidence_links = compute_tge_probability(detail, html, include_links=True)
+    detail.tge_probability = max(detail.tge_probability, probability)
+    for item in evidence:
+        if item not in detail.tge_evidence:
+            detail.tge_evidence.append(item)
+    for item in evidence_links:
+        if item not in detail.tge_evidence_links:
+            detail.tge_evidence_links.append(item)
 
 
 def extract_meta(html: str, name: str) -> str:
@@ -715,7 +733,11 @@ def parse_rootdata_detail_html(html: str) -> LiveProjectDetail:
             )
     else:
         detail.tge_status = "未 TGE"
-        detail.tge_probability, detail.tge_evidence, detail.tge_evidence_links = compute_tge_probability(detail, html)
+        detail.tge_probability, detail.tge_evidence, detail.tge_evidence_links = compute_tge_probability(
+            detail,
+            html,
+            include_links=False,
+        )
         detail.tge_method = "未 TGE"
 
     if detail.tge_date:
@@ -784,6 +806,19 @@ def fetch_x_followers(handle: str) -> tuple[Optional[int], str]:
         if match:
             return int(match.group(1)), "x_html"
     return None, "not_found"
+
+
+def fetch_x_profile_html(handle: str) -> tuple[str, str]:
+    normalized = handle.strip().lstrip("@")
+    if not normalized:
+        return "", "missing_handle"
+    last_error = "not_found"
+    for url in (f"https://x.com/{quote(normalized)}", f"https://twitter.com/{quote(normalized)}"):
+        try:
+            return fetch_text(url, retries=1, timeout=12), url
+        except Exception as exc:
+            last_error = str(exc)
+    return "", last_error
 
 
 def fetch_live_project_detail(
@@ -882,6 +917,10 @@ def fetch_live_project_detail(
     if x_handle and normalize_handle_from_url(f"https://x.com/{x_handle}") != detail.x_handle:
         detail.x_handle = x_handle.strip().lstrip("@")
         detail.x_url = f"https://x.com/{detail.x_handle}"
+    x_profile_html = ""
+    if detail.x_handle:
+        x_profile_html, _ = fetch_x_profile_html(detail.x_handle)
+        supplement_tge_evidence_from_x_html(detail, x_profile_html)
     if fetch_followers and detail.x_handle:
         followers, source = fetch_x_followers(detail.x_handle)
         if followers is not None:

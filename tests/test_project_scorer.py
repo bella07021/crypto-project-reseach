@@ -21,6 +21,7 @@ from live_project_fetcher import (
     normalize_rootdata_url,
     parse_rootdata_detail_html,
     rootdata_fetch_urls,
+    supplement_tge_evidence_from_x_html,
 )
 from score_project import make_funding_round_rows, make_roadmap_event_rows, make_score_rows
 
@@ -108,7 +109,7 @@ class ProjectScorerTests(unittest.TestCase):
         self.assertEqual(len(detail.team_members), 3)
         self.assertEqual(detail.team_members[0]["linkedin_url"], "https://linkedin.com/in/ben")
 
-    def test_parse_rootdata_detail_html_links_untge_twitter_signal_evidence(self):
+    def test_parse_rootdata_detail_html_does_not_link_untge_rootdata_signal_evidence(self):
         html = """
         <h1>Solstice</h1>
         <a href="https://x.com/solsticefi">X</a>
@@ -119,6 +120,23 @@ class ProjectScorerTests(unittest.TestCase):
 
         self.assertEqual(detail.tge_status, "未 TGE")
         self.assertGreaterEqual(detail.tge_probability, 80)
+        self.assertEqual(detail.tge_evidence_links, [])
+
+    def test_supplement_tge_evidence_from_project_x_html_links_own_statuses(self):
+        detail = parse_rootdata_detail_html(
+            """
+            <h1>Solstice</h1>
+            <a href="https://x.com/solsticefi">X</a>
+            <script>self.__next_f.push([1,"Solstice published tokenomics and airdrop season details before IDO sale"])</script>
+            """
+        )
+        x_html = """
+        <article>Solstice published tokenomics and airdrop season details
+        https://x.com/solsticefi/status/1234567890123456789 before IDO sale</article>
+        """
+
+        supplement_tge_evidence_from_x_html(detail, x_html)
+
         self.assertEqual(
             detail.tge_evidence_links,
             [
