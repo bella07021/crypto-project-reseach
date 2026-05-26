@@ -137,6 +137,20 @@ class ProjectScorerTests(unittest.TestCase):
             ],
         )
 
+    def test_parse_rootdata_detail_html_ignores_other_project_twitter_signal_links(self):
+        html = """
+        <h1>Citrea</h1>
+        <a href="https://x.com/citrea_xyz">X</a>
+        <script>self.__next_f.push([1,"Other project published tokenomics and airdrop season details at https://x.com/other_project/status/1234567890123456789 before IDO sale"])</script>
+        """
+
+        detail = parse_rootdata_detail_html(html)
+
+        self.assertEqual(detail.x_handle, "citrea_xyz")
+        self.assertEqual(detail.tge_status, "未 TGE")
+        self.assertGreaterEqual(detail.tge_probability, 80)
+        self.assertEqual(detail.tge_evidence_links, [])
+
     def test_fetch_live_project_detail_refetches_incomplete_rootdata_html(self):
         incomplete_html = '<html><head><title>RootData</title></head><body>Please enable JavaScript</body></html>'
         complete_html = """

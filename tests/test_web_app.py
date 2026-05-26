@@ -221,6 +221,7 @@ class WebAppTests(unittest.TestCase):
             "tge_probability": 80,
             "tge_method": "未 TGE",
             "tge_date": "",
+            "listed_exchanges": ["Bitget"],
             "evidence_notes": [],
         }
         html = """
@@ -241,6 +242,28 @@ class WebAppTests(unittest.TestCase):
             assessment["tge_evidence_links"],
             [{"text": "Binance Alpha Airdrop active from May 25, 2026", "url": "https://icodrops.com/solstice/"}],
         )
+
+    def test_apply_icodrops_tge_signal_without_exchange_stays_untge(self):
+        assessment = {
+            "tge_status": "未 TGE",
+            "tge_probability": 80,
+            "tge_method": "未 TGE",
+            "tge_date": "",
+            "listed_exchanges": [],
+            "evidence_notes": [],
+        }
+        html = """
+        <h1>Citrea</h1>
+        <h2>Binance Alpha Airdrop</h2>
+        <p>Active from May 26, 2026</p>
+        """
+
+        apply_icodrops_tge_signal(assessment, html, "https://icodrops.com/citrea/")
+
+        self.assertEqual(assessment["tge_status"], "未 TGE")
+        self.assertEqual(assessment["tge_probability"], 95)
+        self.assertEqual(assessment["tge_method"], "Binance Alpha Airdrop")
+        self.assertEqual(assessment["tge_date"], "2026-05-26")
 
     def test_apply_icodrops_tge_signal_keeps_upcoming_distribution_without_airdrop_untge(self):
         assessment = {
@@ -284,6 +307,7 @@ class WebAppTests(unittest.TestCase):
                     "tge_status": "已 TGE",
                     "tge_method": "Binance Alpha Airdrop",
                     "tge_date": "",
+                    "listed_exchanges": ["Bitget"],
                     "tge_evidence_links": [
                         {"text": "Binance Alpha Airdrop", "url": "https://icodrops.com/solstice/"}
                     ],
@@ -293,6 +317,35 @@ class WebAppTests(unittest.TestCase):
 
         self.assertEqual(rows[0]["tge_date"], "2026-05-25")
         self.assertEqual(rows[0]["assessment"]["tge_date"], "2026-05-25")
+
+    def test_dashboard_rows_downgrades_tge_without_exchange_and_prunes_foreign_x_links(self):
+        rows = dashboard_rows(
+            [
+                {
+                    "project_name": "Citrea",
+                    "x_handle": "citrea_xyz",
+                    "rootdata_url": "https://cn.rootdata.com/projects/detail/Citrea?k=MTEyNTk%3D",
+                    "total_score": 50,
+                    "tge_status": "已 TGE",
+                    "tge_probability": 100,
+                    "tge_method": "Binance Alpha Airdrop",
+                    "tge_date": "2026-05-26",
+                    "listed_exchanges": [],
+                    "tge_evidence_links": [
+                        {"text": "出现代币经济模型相关表述", "url": "https://x.com/other_project/status/1"},
+                        {"text": "Binance Alpha Airdrop", "url": "https://icodrops.com/citrea/"},
+                    ],
+                }
+            ]
+        )
+
+        self.assertEqual(rows[0]["tge_status"], "未 TGE")
+        self.assertEqual(rows[0]["tge_probability"], 95)
+        self.assertEqual(rows[0]["assessment"]["tge_status"], "未 TGE")
+        self.assertEqual(
+            rows[0]["assessment"]["tge_evidence_links"],
+            [{"text": "Binance Alpha Airdrop", "url": "https://icodrops.com/citrea/"}],
+        )
 
     def test_github_history_append_creates_contents_payload(self):
         captured = {}

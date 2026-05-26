@@ -327,8 +327,11 @@ def parse_structured_events(html: str) -> list[dict[str, object]]:
     return sorted(events, key=lambda item: str(item.get("date", "")))
 
 
-def nearest_x_status_url(text: str, tokens: list[str]) -> str:
+def nearest_x_status_url(text: str, tokens: list[str], allowed_handle: str = "") -> str:
     urls = list(re.finditer(r"https?://(?:www\.)?(?:x|twitter)\.com/[A-Za-z0-9_]+/status/\d+", text, re.I))
+    if allowed_handle:
+        normalized_handle = allowed_handle.strip().lstrip("@").lower()
+        urls = [match for match in urls if normalize_handle_from_url(match.group(0)).lower() == normalized_handle]
     if not urls:
         return ""
     lower = text.lower()
@@ -356,21 +359,21 @@ def compute_tge_probability(detail: LiveProjectDetail, text: str) -> tuple[int, 
         score += 30
         label = "出现代币经济模型相关表述"
         evidence.append(label)
-        url = nearest_x_status_url(text, tokenomics_tokens)
+        url = nearest_x_status_url(text, tokenomics_tokens, detail.x_handle)
         if url:
             evidence_links.append({"text": label, "url": url})
     if any(token in lower for token in airdrop_tokens):
         score += 30
         label = "出现积分/空投/赛季活动相关表述"
         evidence.append(label)
-        url = nearest_x_status_url(text, airdrop_tokens)
+        url = nearest_x_status_url(text, airdrop_tokens, detail.x_handle)
         if url:
             evidence_links.append({"text": label, "url": url})
     if any(token in lower for token in ido_tokens):
         score += 20
         label = "出现 IDO/Launchpad/Sale 相关表述"
         evidence.append(label)
-        url = nearest_x_status_url(text, ido_tokens)
+        url = nearest_x_status_url(text, ido_tokens, detail.x_handle)
         if url:
             evidence_links.append({"text": label, "url": url})
     return min(score, 95), evidence, evidence_links

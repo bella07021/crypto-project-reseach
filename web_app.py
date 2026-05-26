@@ -155,6 +155,8 @@ def score_payload(data: dict[str, Any]) -> dict[str, Any]:
     assessment.update(exchange_progress(assessment.get("roadmap_events", [])) if payload.no_live else project_exchange_progress(assessment))
     if not payload.no_live:
         apply_icodrops_tge_signal_from_web(assessment)
+    prune_foreign_project_tge_links(assessment)
+    apply_tge_exchange_gate(assessment)
     if github_storage_config():
         history = append_github_history(assessment)
         workbook = github_storage_label()
@@ -632,8 +634,12 @@ def apply_icodrops_tge_signal(assessment: dict[str, Any], html: str, url: str) -
         return
     if assessment.get("tge_status") == "已 TGE":
         return
-    assessment["tge_status"] = "已 TGE"
-    assessment["tge_probability"] = 100
+    if assessment_has_listed_exchange(assessment):
+        assessment["tge_status"] = "已 TGE"
+        assessment["tge_probability"] = 100
+    else:
+        assessment["tge_status"] = "未 TGE"
+        assessment["tge_probability"] = max(int(assessment.get("tge_probability") or 0), 95)
     assessment["tge_method"] = "Binance Alpha Airdrop"
     assessment["tge_date"] = assessment.get("tge_date") or icodrops_airdrop_date(html) or known_icodrops_airdrop_date(assessment, url)
     links = assessment.setdefault("tge_evidence_links", [])
@@ -654,6 +660,39 @@ def apply_icodrops_tge_signal_from_web(assessment: dict[str, Any]) -> None:
     apply_icodrops_tge_signal(assessment, html, url)
 
 
+def assessment_has_listed_exchange(assessment: dict[str, Any]) -> bool:
+    return bool(assessment.get("listed_exchanges") or [])
+
+
+def apply_tge_exchange_gate(assessment: dict[str, Any]) -> dict[str, Any]:
+    if assessment.get("tge_status") == "已 TGE" and not assessment_has_listed_exchange(assessment):
+        assessment["tge_status"] = "未 TGE"
+        if assessment.get("tge_method") or assessment.get("tge_date") or assessment.get("tge_evidence_links"):
+            assessment["tge_probability"] = 95
+    return assessment
+
+
+def is_foreign_project_x_status(url: str, x_handle: str) -> bool:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower().removeprefix("www.")
+    if host not in {"x.com", "twitter.com", "mobile.twitter.com"} or "/status/" not in parsed.path:
+        return False
+    if not x_handle:
+        return False
+    handle = parsed.path.strip("/").split("/")[0].lstrip("@").lower()
+    return bool(handle and handle != x_handle.strip().lstrip("@").lower())
+
+
+def prune_foreign_project_tge_links(assessment: dict[str, Any]) -> dict[str, Any]:
+    x_handle = str(assessment.get("x_handle", ""))
+    links = []
+    for link in assessment.get("tge_evidence_links", []) or []:
+        if not is_foreign_project_x_status(str(link.get("url", "")), x_handle):
+            links.append(link)
+    assessment["tge_evidence_links"] = links
+    return assessment
+
+
 def has_binance_alpha_airdrop_evidence(row: dict[str, Any]) -> bool:
     method = str(row.get("tge_method", ""))
     if "Binance Alpha Airdrop" in method:
@@ -668,6 +707,7 @@ def has_binance_alpha_airdrop_evidence(row: dict[str, Any]) -> bool:
 
 def hydrate_cached_assessment(row: dict[str, Any]) -> dict[str, Any]:
     hydrated = dict(row)
+    prune_foreign_project_tge_links(hydrated)
     if (
         not hydrated.get("tge_date")
         and hydrated.get("tge_status") == "已 TGE"
@@ -680,7 +720,7 @@ def hydrate_cached_assessment(row: dict[str, Any]) -> dict[str, Any]:
             for link in links:
                 if str(link.get("text", "")) == "Binance Alpha Airdrop":
                     link["text"] = f"Binance Alpha Airdrop active from {datetime.fromisoformat(hydrated['tge_date']).strftime('%B %-d, %Y')}"
-    return hydrated
+    return apply_tge_exchange_gate(hydrated)
 
 
 def cached_exchange_progress(row: dict[str, Any]) -> dict[str, Any] | None:
