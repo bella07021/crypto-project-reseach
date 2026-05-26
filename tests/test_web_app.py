@@ -248,6 +248,21 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(assessment["tge_probability"], 80)
         self.assertEqual(assessment["tge_method"], "未 TGE")
 
+    def test_apply_icodrops_tge_signal_uses_known_date_when_active_date_missing(self):
+        assessment = {
+            "project_name": "Solstice",
+            "tge_status": "未 TGE",
+            "tge_probability": 80,
+            "tge_method": "未 TGE",
+            "tge_date": "",
+            "evidence_notes": [],
+        }
+        html = "<h2>Binance Alpha Airdrop</h2>"
+
+        apply_icodrops_tge_signal(assessment, html, "https://icodrops.com/solstice/")
+
+        self.assertEqual(assessment["tge_date"], "2026-05-25")
+
     def test_github_history_append_creates_contents_payload(self):
         captured = {}
 

@@ -195,12 +195,7 @@ function renderRoadmap(el, assessment) {
     const item = document.createElement("div");
     item.className = "timeline-item";
     item.innerHTML = `
-      <div class="timeline-type">CMC Markets</div>
       <div class="timeline-name">${exchange}</div>
-      <div>
-        <div class="timeline-date">${assessment.tge_date || "日期待确认"}</div>
-        <div class="timeline-days">${assessment.exchange_source || "CoinMarketCap"}</div>
-      </div>
     `;
     el.appendChild(item);
   }

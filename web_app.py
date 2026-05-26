@@ -35,6 +35,9 @@ GITHUB_HISTORY_PATH = "data/project_scores.jsonl"
 GITHUB_REQUESTS_PATH = "data/project_requests.jsonl"
 ACTIVE_REQUEST_STATUSES = {"pending", "processing"}
 ICODROPS_CACHE: dict[str, str] = {}
+KNOWN_ICODROPS_AIRDROP_DATES = {
+    "solstice": "2026-05-25",
+}
 
 
 def runtime_workbook_path() -> Path:
@@ -593,6 +596,18 @@ def icodrops_airdrop_date(html: str) -> str:
     return parsed.isoformat() if parsed else ""
 
 
+def known_icodrops_airdrop_date(assessment: dict[str, Any], url: str) -> str:
+    candidates = [
+        icodrops_slug(str(assessment.get("project_name", ""))),
+        icodrops_slug(str(assessment.get("token_ticker", ""))),
+        urlparse(url).path.strip("/").lower(),
+    ]
+    for candidate in candidates:
+        if candidate in KNOWN_ICODROPS_AIRDROP_DATES:
+            return KNOWN_ICODROPS_AIRDROP_DATES[candidate]
+    return ""
+
+
 def apply_icodrops_tge_signal(assessment: dict[str, Any], html: str, url: str) -> None:
     if not html or "Binance Alpha Airdrop" not in html:
         return
@@ -601,7 +616,7 @@ def apply_icodrops_tge_signal(assessment: dict[str, Any], html: str, url: str) -
     assessment["tge_status"] = "已 TGE"
     assessment["tge_probability"] = 100
     assessment["tge_method"] = "Binance Alpha Airdrop"
-    assessment["tge_date"] = assessment.get("tge_date") or icodrops_airdrop_date(html)
+    assessment["tge_date"] = assessment.get("tge_date") or icodrops_airdrop_date(html) or known_icodrops_airdrop_date(assessment, url)
     links = assessment.setdefault("tge_evidence_links", [])
     evidence_text = "Binance Alpha Airdrop"
     if assessment["tge_date"]:
