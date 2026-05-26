@@ -26,7 +26,7 @@ from score_project import (
     load_benchmarks,
     write_workbook,
 )
-from live_project_fetcher import normalize_rootdata_url
+from live_project_fetcher import fetch_text, normalize_rootdata_url, parse_human_date
 
 
 ROOT = Path(__file__).resolve().parent
@@ -34,6 +34,7 @@ WEB_DIR = ROOT / "web"
 GITHUB_HISTORY_PATH = "data/project_scores.jsonl"
 GITHUB_REQUESTS_PATH = "data/project_requests.jsonl"
 ACTIVE_REQUEST_STATUSES = {"pending", "processing"}
+ICODROPS_CACHE: dict[str, str] = {}
 
 
 def runtime_workbook_path() -> Path:
@@ -130,7 +131,8 @@ def score_payload(data: dict[str, Any]) -> dict[str, Any]:
     args = namespace_from_payload(payload)
     assessment = build_assessment(args)
     assessment.update(exchange_progress(assessment.get("roadmap_events", [])) if payload.no_live else project_exchange_progress(assessment))
-    apply_exchange_tge_inference(assessment)
+    if not payload.no_live:
+        apply_icodrops_tge_signal_from_web(assessment)
     if github_storage_config():
         history = append_github_history(assessment)
         workbook = github_storage_label()
@@ -563,20 +565,58 @@ def rootdata_tge_date(row: dict[str, Any]) -> str:
     return ""
 
 
-def apply_exchange_tge_inference(assessment: dict[str, Any]) -> None:
-    exchanges = [str(exchange) for exchange in assessment.get("listed_exchanges", []) if str(exchange).strip()]
-    if not exchanges:
+def icodrops_slug(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-")
+
+
+def icodrops_url_for_assessment(assessment: dict[str, Any]) -> str:
+    slug = icodrops_slug(str(assessment.get("project_name") or assessment.get("token_ticker") or ""))
+    return f"https://icodrops.com/{slug}/" if slug else ""
+
+
+def fetch_icodrops_project_html(assessment: dict[str, Any]) -> tuple[str, str]:
+    url = icodrops_url_for_assessment(assessment)
+    if not url:
+        return "", ""
+    if url not in ICODROPS_CACHE:
+        try:
+            ICODROPS_CACHE[url] = fetch_text(url, retries=1, timeout=12)
+        except Exception:
+            ICODROPS_CACHE[url] = ""
+    return ICODROPS_CACHE[url], url
+
+
+def icodrops_airdrop_date(html: str) -> str:
+    match = re.search(r"Active\s+from\s+([A-Z][a-z]+\s+\d{1,2},\s+\d{4})", html)
+    parsed = parse_human_date(match.group(1)) if match else None
+    return parsed.isoformat() if parsed else ""
+
+
+def apply_icodrops_tge_signal(assessment: dict[str, Any], html: str, url: str) -> None:
+    if not html or "Binance Alpha Airdrop" not in html:
         return
     if assessment.get("tge_status") == "已 TGE":
         return
     assessment["tge_status"] = "已 TGE"
     assessment["tge_probability"] = 100
-    assessment["tge_method"] = "CMC Markets"
-    assessment["tge_date"] = assessment.get("tge_date") or rootdata_tge_date(assessment)
+    assessment["tge_method"] = "Binance Alpha Airdrop"
+    assessment["tge_date"] = assessment.get("tge_date") or icodrops_airdrop_date(html)
+    links = assessment.setdefault("tge_evidence_links", [])
+    evidence_text = "Binance Alpha Airdrop"
+    if assessment["tge_date"]:
+        evidence_text = f"Binance Alpha Airdrop active from {datetime.fromisoformat(assessment['tge_date']).strftime('%B %-d, %Y')}"
+    evidence = {"text": evidence_text, "url": url}
+    if evidence not in links:
+        links.append(evidence)
     notes = assessment.setdefault("evidence_notes", [])
-    note = f"CMC markets found listed exchanges: {', '.join(exchanges)}"
+    note = "ICO Drops detected Binance Alpha Airdrop"
     if note not in notes:
         notes.append(note)
+
+
+def apply_icodrops_tge_signal_from_web(assessment: dict[str, Any]) -> None:
+    html, url = fetch_icodrops_project_html(assessment)
+    apply_icodrops_tge_signal(assessment, html, url)
 
 
 def cached_exchange_progress(row: dict[str, Any]) -> dict[str, Any] | None:
@@ -619,7 +659,6 @@ def dashboard_rows(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
             }
         )
         rows[-1]["assessment"] = {**row, **progress}
-        apply_exchange_tge_inference(rows[-1]["assessment"])
         rows[-1]["tge_status"] = rows[-1]["assessment"].get("tge_status", rows[-1]["tge_status"])
         rows[-1]["tge_probability"] = rows[-1]["assessment"].get("tge_probability", rows[-1]["tge_probability"])
         rows[-1]["tge_date"] = rows[-1]["assessment"].get("tge_date", rows[-1]["tge_date"])

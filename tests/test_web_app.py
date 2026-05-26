@@ -13,7 +13,7 @@ from web_app import (
     request_dashboard_rows,
     exchange_progress,
     exchange_progress_from_cmc,
-    apply_exchange_tge_inference,
+    apply_icodrops_tge_signal,
     project_exchange_progress,
     parse_score_payload,
     score_payload,
@@ -205,40 +205,48 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(progress["exchange_score"], 15.0)
         self.assertEqual(progress["listed_exchanges"], ["Bitget", "Gate", "MEXC"])
 
-    def test_apply_exchange_tge_inference_marks_project_tge_when_cmc_lists_exchanges(self):
+    def test_apply_icodrops_tge_signal_marks_binance_alpha_airdrop_as_tge(self):
         assessment = {
             "tge_status": "未 TGE",
             "tge_probability": 80,
             "tge_method": "未 TGE",
             "tge_date": "",
-            "listed_exchanges": ["Bitget", "Gate", "MEXC"],
-            "exchange_source": "CoinMarketCap Web",
             "evidence_notes": [],
         }
+        html = """
+        <h1>Solstice</h1>
+        <h2>Binance Alpha Airdrop</h2>
+        <p>Active from May 25, 2026</p>
+        <h2>TGE and Distribution</h2>
+        <p>Upcoming</p>
+        """
 
-        apply_exchange_tge_inference(assessment)
+        apply_icodrops_tge_signal(assessment, html, "https://icodrops.com/solstice/")
 
         self.assertEqual(assessment["tge_status"], "已 TGE")
         self.assertEqual(assessment["tge_probability"], 100)
-        self.assertEqual(assessment["tge_method"], "CMC Markets")
-        self.assertEqual(assessment["tge_date"], "")
-        self.assertIn("CMC markets found listed exchanges: Bitget, Gate, MEXC", assessment["evidence_notes"])
+        self.assertEqual(assessment["tge_method"], "Binance Alpha Airdrop")
+        self.assertEqual(assessment["tge_date"], "2026-05-25")
+        self.assertEqual(
+            assessment["tge_evidence_links"],
+            [{"text": "Binance Alpha Airdrop active from May 25, 2026", "url": "https://icodrops.com/solstice/"}],
+        )
 
-    def test_apply_exchange_tge_inference_uses_existing_rootdata_tge_date(self):
+    def test_apply_icodrops_tge_signal_keeps_upcoming_distribution_without_airdrop_untge(self):
         assessment = {
             "tge_status": "未 TGE",
             "tge_probability": 80,
             "tge_method": "未 TGE",
             "tge_date": "",
-            "listed_exchanges": ["Bitget"],
-            "exchange_source": "CoinMarketCap Web",
-            "roadmap_events": [{"type": "TGE", "date": "2026-05-20", "name": "Token live"}],
             "evidence_notes": [],
         }
+        html = "<h2>TGE and Distribution</h2><p>Upcoming</p>"
 
-        apply_exchange_tge_inference(assessment)
+        apply_icodrops_tge_signal(assessment, html, "https://icodrops.com/demo/")
 
-        self.assertEqual(assessment["tge_date"], "2026-05-20")
+        self.assertEqual(assessment["tge_status"], "未 TGE")
+        self.assertEqual(assessment["tge_probability"], 80)
+        self.assertEqual(assessment["tge_method"], "未 TGE")
 
     def test_github_history_append_creates_contents_payload(self):
         captured = {}
