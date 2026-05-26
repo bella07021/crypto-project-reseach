@@ -84,7 +84,10 @@ function switchView(name) {
 
 function scoreReason(kind, assessment) {
   if (kind === "team") {
-    return `${assessment.team_background || "unknown"}，实名团队成员 ${assessment.team_member_count || 0} 人`;
+    const region = assessment.team_region_summary ? `，${assessment.team_region_summary}` : "";
+    const known = Number(assessment.team_known_location_count || 0);
+    const knownText = known ? `，已识别地区 ${known} 人` : "";
+    return `${assessment.team_background || "unknown"}${region}，实名团队成员 ${assessment.team_member_count || 0} 人${knownText}`;
   }
   if (kind === "funding") {
     const amount = Number(assessment.funding_amount_usd || 0);

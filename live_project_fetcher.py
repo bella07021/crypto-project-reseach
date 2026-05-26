@@ -58,6 +58,12 @@ class LiveProjectDetail:
     location: str = ""
     team_member_count: int = 0
     named_team_member_count: int = 0
+    team_members: list[dict[str, str]] = field(default_factory=list)
+    team_foreign_count: int = 0
+    team_chinese_count: int = 0
+    team_unknown_count: int = 0
+    team_known_location_count: int = 0
+    team_region_summary: str = ""
     team_raw_score: float = 0.0
     team_background: str = "unknown"
     latest_funding_amount_usd: Optional[int] = None
@@ -398,12 +404,175 @@ def looks_like_international_name(value: str) -> bool:
     return bool(re.fullmatch(r"[A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+)+", cleaned))
 
 
-def infer_team_score(team_member_count: int, location: str, member_names: set[str] | None = None) -> tuple[float, str]:
-    location_lower = location.lower()
-    pure_chinese = any(token in location_lower for token in ["china", "hong kong", "beijing", "shanghai", "中国", "香港"])
+CHINESE_REGION_TOKENS = {
+    "china",
+    "hong kong",
+    "beijing",
+    "shanghai",
+    "shenzhen",
+    "guangzhou",
+    "hangzhou",
+    "中国",
+    "香港",
+    "北京",
+    "上海",
+    "深圳",
+    "广州",
+    "杭州",
+}
+
+FOREIGN_REGION_TOKENS = {
+    "united states",
+    "usa",
+    "singapore",
+    "united kingdom",
+    "uk",
+    "london",
+    "canada",
+    "europe",
+    "dubai",
+    "uae",
+    "germany",
+    "france",
+    "switzerland",
+    "japan",
+    "korea",
+    "australia",
+}
+
+
+def classify_region_text(value: str) -> str:
+    lower = value.lower()
+    if any(token in lower for token in CHINESE_REGION_TOKENS):
+        return "chinese"
+    if any(token in lower for token in FOREIGN_REGION_TOKENS):
+        return "foreign"
+    return "unknown"
+
+
+def parse_team_members(html: str) -> list[dict[str, str]]:
+    members = []
+    name_matches = list(re.finditer(r'\\"name\\":\{[^}]*\\"en_value\\":\\"([^\\"]+)', html))
+    for index, match in enumerate(name_matches):
+        end = name_matches[index + 1].start() if index + 1 < len(name_matches) else min(len(html), match.end() + 1200)
+        segment = html[match.start():end]
+        linkedin_match = re.search(r'\\"lyingUrl\\":\\"([^\\"]+)', segment)
+        twitter_match = re.search(r'\\"twitterUrl\\":\\"([^\\"]+)', segment)
+        member = {
+            "name": unescape(match.group(1) or "").strip(),
+            "linkedin_url": unescape(linkedin_match.group(1) if linkedin_match else "").strip(),
+            "x_url": unescape(twitter_match.group(1) if twitter_match else "").strip(),
+            "region": "unknown",
+            "location": "",
+        }
+        if member["name"] and member not in members:
+            members.append(member)
+    if members:
+        return members
+
+    names = set(re.findall(r'\\"name\\":\{[^}]*\\"en_value\\":\\"([^\\"]+)', html))
+    if not names:
+        names = set(re.findall(r'"name":\{[^}]*"en_value":"([^"]+)', html))
+    return [{"name": name, "linkedin_url": "", "x_url": "", "region": "unknown", "location": ""} for name in sorted(names)]
+
+
+def summarize_team_regions(members: list[dict[str, str]], project_location: str = "") -> dict[str, object]:
+    foreign = 0
+    chinese = 0
+    for member in members:
+        region = member.get("region") or "unknown"
+        if region == "unknown":
+            region = classify_region_text(" ".join([project_location, member.get("location", ""), member.get("name", "")]))
+            if region == "unknown" and looks_like_international_name(member.get("name", "")):
+                region = "foreign"
+            member["region"] = region
+        if region == "foreign":
+            foreign += 1
+        elif region == "chinese":
+            chinese += 1
+    total = len(members)
+    unknown = max(0, total - foreign - chinese)
+    known = foreign + chinese
+    if known == 0:
+        background = "unknown"
+    elif chinese > foreign:
+        background = "pure_chinese"
+    elif foreign > chinese:
+        background = "international"
+    else:
+        background = "mixed"
+    if foreign and not chinese:
+        summary = f"{foreign}/{total} foreign"
+    elif chinese and not foreign:
+        summary = f"{chinese}/{total} Chinese"
+    else:
+        summary = f"{foreign}/{total} foreign · {chinese}/{total} Chinese · {unknown} unknown"
+    return {
+        "foreign": foreign,
+        "chinese": chinese,
+        "unknown": unknown,
+        "known": known,
+        "background": background,
+        "summary": summary,
+    }
+
+
+def extract_linkedin_location(html: str) -> str:
+    text = clean_html_text(html)
+    patterns = [
+        r"((?:San Francisco|New York|London|Singapore|Dubai|Toronto|Berlin|Paris|Shanghai|Beijing|Shenzhen|Hong Kong)[^·|,\n]{0,40}(?:,\s*(?:United States|USA|United Kingdom|UK|Singapore|China|Canada|Germany|France|UAE|Hong Kong))?)",
+        r"(United States|USA|United Kingdom|UK|Singapore|China|Canada|Germany|France|UAE|Hong Kong)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, re.I)
+        if match:
+            return match.group(1).strip()
+    return ""
+
+
+def enrich_team_members_from_linkedin(
+    members: list[dict[str, str]],
+    *,
+    budget_seconds: int = 120,
+    fetcher=fetch_text,
+) -> dict[str, object]:
+    deadline = time.monotonic() + max(1, budget_seconds)
+    for member in members:
+        if time.monotonic() >= deadline:
+            break
+        linkedin_url = member.get("linkedin_url", "")
+        if not linkedin_url or member.get("location"):
+            continue
+        remaining = max(1, int(deadline - time.monotonic()))
+        try:
+            html = fetcher(linkedin_url, retries=1, timeout=min(8, remaining))
+        except Exception:
+            continue
+        location = extract_linkedin_location(html)
+        if not location:
+            continue
+        member["location"] = location
+        member["region"] = classify_region_text(location)
+    return summarize_team_regions(members)
+
+
+def apply_team_region_summary(detail: LiveProjectDetail, summary: dict[str, object]) -> None:
+    detail.team_foreign_count = int(summary["foreign"])
+    detail.team_chinese_count = int(summary["chinese"])
+    detail.team_unknown_count = int(summary["unknown"])
+    detail.team_known_location_count = int(summary["known"])
+    detail.team_region_summary = str(summary["summary"])
+
+
+def infer_team_score(team_member_count: int, location: str, member_names: set[str] | None = None, members: list[dict[str, str]] | None = None) -> tuple[float, str]:
+    location_region = classify_region_text(location)
+    pure_chinese = location_region == "chinese"
+    region_summary = summarize_team_regions(members or [], location)
     international_members = sum(1 for name in (member_names or set()) if looks_like_international_name(name))
     if pure_chinese:
         background = "pure_chinese"
+    elif region_summary["background"] in {"international", "pure_chinese", "mixed"}:
+        background = str(region_summary["background"])
     elif location or international_members >= 2:
         background = "international"
     else:
@@ -456,15 +625,17 @@ def parse_rootdata_detail_html(html: str) -> LiveProjectDetail:
     detail.location = extract_label_value(html, "Location")
     detail.bucket = infer_bucket(detail.tags, " ".join([detail.description, html[:50000]]))
 
-    member_names = set(re.findall(r'\\"name\\":\{[^}]*\\"en_value\\":\\"([^\\"]+)', html))
-    if not member_names:
-        member_names = set(re.findall(r'"name":\{[^}]*"en_value":"([^"]+)', html))
+    detail.team_members = parse_team_members(html)
+    member_names = {member.get("name", "") for member in detail.team_members if member.get("name")}
     detail.team_member_count = len(member_names)
     detail.named_team_member_count = len(member_names)
+    region_summary = summarize_team_regions(detail.team_members, detail.location)
+    apply_team_region_summary(detail, region_summary)
     detail.team_raw_score, detail.team_background = infer_team_score(
         detail.team_member_count,
         detail.location,
         member_names,
+        detail.team_members,
     )
 
     total_match = re.search(r'\\"facAmountUS\\":(\d+)|"facAmountUS":(\d+)', html)
@@ -651,6 +822,23 @@ def fetch_live_project_detail(
                 detail.evidence_notes.append("RootData fetch errors: " + " | ".join(errors[-2:]))
         else:
             detail.fetch_status = "ok"
+
+    if not os.environ.get("VERCEL") and detail.team_members:
+        budget = int(os.environ.get("TEAM_LINKEDIN_BUDGET_SECONDS", "120") or "120")
+        summary = enrich_team_members_from_linkedin(detail.team_members, budget_seconds=budget)
+        apply_team_region_summary(detail, summary)
+        member_names = {member.get("name", "") for member in detail.team_members if member.get("name")}
+        detail.team_raw_score, detail.team_background = infer_team_score(
+            detail.team_member_count,
+            detail.location,
+            member_names,
+            detail.team_members,
+        )
+        if detail.team_known_location_count:
+            detail.evidence_notes.append(
+                f"Team region: {detail.team_foreign_count} foreign / "
+                f"{detail.team_chinese_count} Chinese / {detail.team_unknown_count} unknown"
+            )
 
     if x_handle and normalize_handle_from_url(f"https://x.com/{x_handle}") != detail.x_handle:
         detail.x_handle = x_handle.strip().lstrip("@")

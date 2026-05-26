@@ -15,6 +15,7 @@ from project_scorer import (
     calculate_total_score,
 )
 from live_project_fetcher import (
+    enrich_team_members_from_linkedin,
     fetch_live_project_detail,
     fetch_text_with_vercel_browser,
     normalize_rootdata_url,
@@ -91,6 +92,12 @@ class ProjectScorerTests(unittest.TestCase):
 
         self.assertEqual(detail.team_member_count, 3)
         self.assertEqual(detail.team_background, "international")
+        self.assertEqual(detail.team_foreign_count, 3)
+        self.assertEqual(detail.team_chinese_count, 0)
+        self.assertEqual(detail.team_unknown_count, 0)
+        self.assertEqual(detail.team_region_summary, "3/3 foreign")
+        self.assertEqual(len(detail.team_members), 3)
+        self.assertEqual(detail.team_members[0]["linkedin_url"], "https://linkedin.com/in/ben")
 
     def test_fetch_live_project_detail_refetches_incomplete_rootdata_html(self):
         incomplete_html = '<html><head><title>RootData</title></head><body>Please enable JavaScript</body></html>'
@@ -115,6 +122,24 @@ class ProjectScorerTests(unittest.TestCase):
         self.assertEqual(detail.latest_funding_amount_usd, 25_000_000)
         self.assertEqual(detail.team_member_count, 1)
         self.assertEqual(detail.fetch_status, "ok")
+
+    def test_enrich_team_members_from_linkedin_updates_region_counts(self):
+        members = [
+            {"name": "Alice Chen", "linkedin_url": "https://linkedin.com/in/alice", "x_url": "", "region": "foreign", "location": ""},
+            {"name": "Bob Smith", "linkedin_url": "https://linkedin.com/in/bob", "x_url": "", "region": "unknown", "location": ""},
+        ]
+
+        def fake_fetch(url, retries=1, timeout=8):
+            if "alice" in url:
+                return '<html><body><span>Shanghai, China</span></body></html>'
+            return '<html><body><span>San Francisco, United States</span></body></html>'
+
+        summary = enrich_team_members_from_linkedin(members, budget_seconds=120, fetcher=fake_fetch)
+
+        self.assertEqual(summary["chinese"], 1)
+        self.assertEqual(summary["foreign"], 1)
+        self.assertEqual(summary["known"], 2)
+        self.assertEqual(members[0]["location"], "Shanghai, China")
 
     def test_fetch_live_project_detail_uses_curl_when_urlopen_fails(self):
         complete_html = """

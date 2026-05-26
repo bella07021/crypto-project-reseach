@@ -149,6 +149,12 @@ def build_assessment(args: argparse.Namespace) -> dict[str, object]:
         "website": live_detail.website if live_detail else "",
         "location": live_detail.location if live_detail else "",
         "team_member_count": live_detail.team_member_count if live_detail else 0,
+        "team_members": live_detail.team_members if live_detail else [],
+        "team_foreign_count": live_detail.team_foreign_count if live_detail else 0,
+        "team_chinese_count": live_detail.team_chinese_count if live_detail else 0,
+        "team_unknown_count": live_detail.team_unknown_count if live_detail else 0,
+        "team_known_location_count": live_detail.team_known_location_count if live_detail else 0,
+        "team_region_summary": live_detail.team_region_summary if live_detail else "",
         "benchmark_csv": str(args.benchmark_csv),
         "workbook": str(args.workbook),
     }
