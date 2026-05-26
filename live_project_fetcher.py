@@ -885,23 +885,48 @@ def fetch_x_profile_html(handle: str) -> tuple[str, str]:
     return "", last_error
 
 
-def fetch_x_signal_htmls(handle: str) -> list[str]:
+def x_signal_urls(handle: str) -> list[str]:
     normalized = handle.strip().lstrip("@")
     if not normalized:
         return []
-    urls = [
+    return [
         f"https://x.com/{quote(normalized)}",
         f"https://x.com/search?{urlencode({'q': f'from:{normalized} tokenomics', 'src': 'typed_query'})}",
         f"https://x.com/search?{urlencode({'q': f'from:{normalized} airdrop', 'src': 'typed_query'})}",
         f"https://x.com/search?{urlencode({'q': f'from:{normalized} points OR season', 'src': 'typed_query'})}",
         f"https://x.com/search?{urlencode({'q': f'from:{normalized} IDO OR launchpad OR sale', 'src': 'typed_query'})}",
     ]
+
+
+def fetch_x_signal_htmls_with_browser(urls: list[str]) -> list[str]:
+    if not urls or not shutil.which("node") or os.environ.get("VERCEL"):
+        return []
+    result = subprocess.run(
+        ["node", "x_signal_scrape.js", *urls],
+        cwd=Path(__file__).resolve().parent,
+        capture_output=True,
+        text=True,
+        timeout=90,
+        check=False,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return []
+    return [result.stdout]
+
+
+def fetch_x_signal_htmls(handle: str) -> list[str]:
+    urls = x_signal_urls(handle)
     htmls = []
     for url in urls:
         try:
             htmls.append(fetch_text(url, retries=1, timeout=12))
         except Exception:
-            continue
+            try:
+                htmls.append(fetch_text_with_curl(url, timeout=12))
+            except Exception:
+                continue
+    if not any(re.search(r"/status/\d+|airdrop|tokenomics|points|season|launchpad|ido", html, re.I) for html in htmls):
+        htmls.extend(fetch_x_signal_htmls_with_browser(urls))
     return htmls
 
 

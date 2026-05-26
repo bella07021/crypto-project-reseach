@@ -18,6 +18,7 @@ from live_project_fetcher import (
     enrich_team_members_from_linkedin,
     fetch_live_project_detail,
     fetch_x_signal_htmls,
+    fetch_x_signal_htmls_with_browser,
     fetch_text_with_vercel_browser,
     normalize_rootdata_url,
     parse_rootdata_detail_html,
@@ -206,6 +207,34 @@ class ProjectScorerTests(unittest.TestCase):
 
         self.assertEqual(len(htmls), 5)
         self.assertTrue(any("from%3Acitrea_xyz+airdrop" in url for url in seen_urls))
+
+    def test_fetch_x_signal_htmls_uses_browser_when_static_pages_have_no_signals(self):
+        captured = {}
+
+        def fake_browser(urls):
+            captured["urls"] = urls
+            return ["rendered https://x.com/citrea_xyz/status/1 airdrop claim"]
+
+        with patch("live_project_fetcher.fetch_text", return_value="<html>X shell</html>"), patch(
+            "live_project_fetcher.fetch_x_signal_htmls_with_browser",
+            side_effect=fake_browser,
+        ):
+            htmls = fetch_x_signal_htmls("citrea_xyz")
+
+        self.assertTrue(any("status/1" in html for html in htmls))
+        self.assertTrue(any("from%3Acitrea_xyz+airdrop" in url for url in captured["urls"]))
+
+    def test_fetch_x_signal_htmls_with_browser_returns_rendered_payload(self):
+        fake_result = type("Result", (), {"returncode": 0, "stdout": "rendered status", "stderr": ""})()
+
+        with patch("live_project_fetcher.shutil.which", return_value="/usr/bin/node"), patch(
+            "live_project_fetcher.subprocess.run",
+            return_value=fake_result,
+        ) as run:
+            htmls = fetch_x_signal_htmls_with_browser(["https://x.com/search?q=x"])
+
+        self.assertEqual(htmls, ["rendered status"])
+        self.assertIn("x_signal_scrape.js", run.call_args.args[0])
 
     def test_parse_rootdata_detail_html_ignores_other_project_twitter_signal_links(self):
         html = """
