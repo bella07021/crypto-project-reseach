@@ -391,7 +391,7 @@ form.addEventListener("submit", async (event) => {
     reportMount.innerHTML = `<section class="report-section"><h3>评分失败</h3><p>${error.message}</p></section>`;
   } finally {
     submitButton.disabled = false;
-    submitButton.textContent = "开始评分";
+    submitButton.textContent = "开始更新评分";
   }
 });
 

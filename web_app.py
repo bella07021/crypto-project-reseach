@@ -297,8 +297,18 @@ def project_request_key(rootdata_url: str, x_handle: str = "") -> str:
     return x_handle.strip().lstrip("@").lower()
 
 
-def project_request_id(request_key: str) -> str:
-    return hashlib.sha256(request_key.encode("utf-8")).hexdigest()[:16]
+def project_request_id(request_key: str, timestamp: str = "") -> str:
+    seed = f"{request_key}|{timestamp}" if timestamp else request_key
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
+
+
+def parse_iso_datetime(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def create_project_request(data: dict[str, Any]) -> dict[str, Any]:
@@ -321,7 +331,7 @@ def create_project_request(data: dict[str, Any]) -> dict[str, Any]:
 
     timestamp = now_iso()
     request = {
-        "request_id": project_request_id(request_key),
+        "request_id": project_request_id(request_key, timestamp),
         "request_key": request_key,
         "status": "pending",
         "x_handle": x_handle,
@@ -637,7 +647,13 @@ def combined_dashboard_rows(history: list[dict[str, Any]], requests: list[dict[s
 def find_assessment_for_request(request: dict[str, Any], history: list[dict[str, Any]]) -> dict[str, Any] | None:
     request_key = project_request_key(str(request.get("rootdata_url", "")), str(request.get("x_handle", "")))
     request_handle = str(request.get("x_handle", "")).strip().lstrip("@").lower()
+    requested_at = parse_iso_datetime(str(request.get("requested_at", "")))
     for row in reversed(history):
+        assessed_at = parse_iso_datetime(str(row.get("assessed_at", "")))
+        if requested_at and assessed_at and assessed_at < requested_at:
+            continue
+        if requested_at and not assessed_at and str(request.get("status", "")) not in {"done", "failed"}:
+            continue
         row_key = project_request_key(str(row.get("rootdata_url", "")), str(row.get("x_handle", "")))
         row_handle = str(row.get("x_handle", "")).strip().lstrip("@").lower()
         if request_key and request_key == row_key:

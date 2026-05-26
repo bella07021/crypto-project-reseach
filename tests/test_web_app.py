@@ -268,6 +268,33 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(len(writes[0][0]), 1)
         self.assertEqual(writes[0][1], "Add project request for NexusLabs")
 
+    def test_create_project_request_refreshes_completed_project_with_new_request_id(self):
+        writes = []
+        existing = {
+            "request_id": "old_done",
+            "status": "done",
+            "x_handle": "NexusLabs",
+            "rootdata_url": "https://www.rootdata.com/Projects/detail/Nexus?k=MTE3NDI%3D",
+            "request_key": "rootdata.com/projects/detail/nexus?k=mte3ndi%3d",
+            "requested_at": "2026-05-24T08:00:00+00:00",
+        }
+
+        with patch("web_app.read_github_requests_with_sha", return_value=([existing], "sha")), patch(
+            "web_app.write_github_requests",
+            side_effect=lambda rows, message, sha=None: writes.append((rows, message, sha)),
+        ):
+            result = create_project_request(
+                {
+                    "x_handle": "@NexusLabs",
+                    "rootdata_url": "https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D",
+                }
+            )
+
+        self.assertTrue(result["created"])
+        self.assertNotEqual(result["request"]["request_id"], "old_done")
+        self.assertEqual(result["request"]["status"], "pending")
+        self.assertEqual(len(writes[0][0]), 2)
+
     def test_request_dashboard_rows_excludes_projects_with_scores(self):
         requests = [
             {
@@ -322,6 +349,58 @@ class WebAppTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["request"]["status"], "done")
         self.assertEqual(payload["assessment"]["token_ticker"], "NEX")
+
+    def test_request_status_payload_does_not_return_old_assessment_for_refresh_request(self):
+        requests = [
+            {
+                "request_id": "refresh1",
+                "status": "pending",
+                "x_handle": "NexusLabs",
+                "rootdata_url": "https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D",
+                "requested_at": "2026-05-26T08:00:00+00:00",
+            }
+        ]
+        history = [
+            {
+                "x_handle": "NexusLabs",
+                "rootdata_url": "https://www.rootdata.com/Projects/detail/Nexus?k=MTE3NDI%3D",
+                "token_ticker": "NEX",
+                "total_score": 48.02,
+                "assessed_at": "2026-05-25T08:00:00+00:00",
+            }
+        ]
+
+        payload = request_status_payload("refresh1", requests, history)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["request"]["status"], "pending")
+        self.assertIsNone(payload["assessment"])
+
+    def test_request_status_payload_returns_newer_assessment_for_refresh_request(self):
+        requests = [
+            {
+                "request_id": "refresh1",
+                "status": "processing",
+                "x_handle": "NexusLabs",
+                "rootdata_url": "https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D",
+                "requested_at": "2026-05-26T08:00:00+00:00",
+            }
+        ]
+        history = [
+            {
+                "x_handle": "NexusLabs",
+                "rootdata_url": "https://www.rootdata.com/Projects/detail/Nexus?k=MTE3NDI%3D",
+                "token_ticker": "NEX",
+                "total_score": 49.50,
+                "assessed_at": "2026-05-26T08:01:00+00:00",
+            }
+        ]
+
+        payload = request_status_payload("refresh1", requests, history)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["request"]["status"], "done")
+        self.assertEqual(payload["assessment"]["total_score"], 49.50)
 
 
 if __name__ == "__main__":
