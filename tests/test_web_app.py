@@ -216,7 +216,7 @@ class WebAppTests(unittest.TestCase):
         html = """
         <h1>Solstice</h1>
         <h2>Binance Alpha Airdrop</h2>
-        <p>Active from May 25, 2026</p>
+        <p>Active from <span>May</span> <strong>25,</strong> 2026</p>
         <h2>TGE and Distribution</h2>
         <p>Upcoming</p>
         """

@@ -26,7 +26,7 @@ from score_project import (
     load_benchmarks,
     write_workbook,
 )
-from live_project_fetcher import fetch_text, normalize_rootdata_url, parse_human_date
+from live_project_fetcher import clean_html_text, fetch_text, normalize_rootdata_url, parse_human_date
 
 
 ROOT = Path(__file__).resolve().parent
@@ -587,7 +587,8 @@ def fetch_icodrops_project_html(assessment: dict[str, Any]) -> tuple[str, str]:
 
 
 def icodrops_airdrop_date(html: str) -> str:
-    match = re.search(r"Active\s+from\s+([A-Z][a-z]+\s+\d{1,2},\s+\d{4})", html)
+    text = clean_html_text(html)
+    match = re.search(r"Active\s+from\s+([A-Z][a-z]+\s+\d{1,2},\s+\d{4})", text)
     parsed = parse_human_date(match.group(1)) if match else None
     return parsed.isoformat() if parsed else ""
 
