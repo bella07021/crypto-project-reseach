@@ -39,7 +39,22 @@ function formPayload() {
 }
 
 function normalizeHandle(value) {
-  return String(value || "").trim().replace(/^@/, "").toLowerCase();
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const candidate = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    const parsed = new URL(candidate);
+    const host = parsed.hostname.replace(/^www\./, "").toLowerCase();
+    if (["x.com", "twitter.com", "mobile.twitter.com"].includes(host)) {
+      const part = parsed.pathname.split("/").filter(Boolean)[0] || "";
+      if (part && !["i", "intent", "search", "share", "home", "explore"].includes(part.toLowerCase())) {
+        return part.replace(/^@/, "").toLowerCase();
+      }
+    }
+  } catch {
+    // Fall through to raw handle normalization.
+  }
+  return raw.replace(/^@/, "").toLowerCase();
 }
 
 function normalizeRootdataUrl(value) {
@@ -162,7 +177,7 @@ function renderTgeEvidence(el, assessment) {
         anchor.href = item.url;
         anchor.target = "_blank";
         anchor.rel = "noopener noreferrer";
-        anchor.textContent = "X 链接";
+        anchor.textContent = "链接";
         li.appendChild(anchor);
       }
       el.appendChild(li);
@@ -263,7 +278,7 @@ function renderRequestStatus(request, created) {
         <span>${request.status || "pending"}</span>
       </div>
       <div class="detail-grid">
-        <div><span>X handle</span><strong>@${request.x_handle || "--"}</strong></div>
+        <div><span>X</span><strong>@${request.x_handle || "--"}</strong></div>
         <div><span>RootData</span><strong>${request.rootdata_url || "--"}</strong></div>
       </div>
       <ul class="clean-list">

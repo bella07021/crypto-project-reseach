@@ -39,6 +39,16 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(payload.listing_signal, ["binance_alpha"])
         self.assertTrue(payload.no_live)
 
+    def test_parse_score_payload_accepts_x_url(self):
+        payload = parse_score_payload(
+            {
+                "x_handle": "https://x.com/NexusLabs/status/123",
+                "rootdata_url": "https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D",
+            }
+        )
+
+        self.assertEqual(payload.x_handle, "NexusLabs")
+
     def test_parse_score_payload_accepts_rootdata_html(self):
         payload = parse_score_payload(
             {

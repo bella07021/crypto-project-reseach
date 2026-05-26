@@ -82,8 +82,27 @@ def as_float(value: Any, default: float = 0.0) -> float:
     return float(value)
 
 
+def normalize_x_handle(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    if raw.startswith("@"):
+        return raw.lstrip("@").strip()
+    candidate = raw if re.match(r"^https?://", raw, re.I) else f"https://{raw}"
+    try:
+        parsed = urlparse(candidate)
+        host = parsed.hostname or ""
+        if host.lower().removeprefix("www.") in {"x.com", "twitter.com", "mobile.twitter.com"}:
+            parts = [part for part in parsed.path.split("/") if part]
+            if parts and parts[0].lower() not in {"i", "intent", "search", "share", "home", "explore"}:
+                return parts[0].lstrip("@")
+    except Exception:
+        pass
+    return raw.lstrip("@")
+
+
 def parse_score_payload(data: dict[str, Any]) -> ScorePayload:
-    x_handle = str(data.get("x_handle", "")).strip().lstrip("@")
+    x_handle = normalize_x_handle(data.get("x_handle", ""))
     rootdata_url = str(data.get("rootdata_url", "")).strip()
     if not x_handle:
         raise ValueError("x_handle is required")
@@ -300,7 +319,7 @@ def project_request_key(rootdata_url: str, x_handle: str = "") -> str:
     normalized_url = normalize_rootdata_url(rootdata_url)
     if normalized_url:
         return normalized_url.lower()
-    return x_handle.strip().lstrip("@").lower()
+    return normalize_x_handle(x_handle).lower()
 
 
 def project_request_id(request_key: str, timestamp: str = "") -> str:
@@ -318,7 +337,7 @@ def parse_iso_datetime(value: str) -> datetime | None:
 
 
 def create_project_request(data: dict[str, Any]) -> dict[str, Any]:
-    x_handle = str(data.get("x_handle", "")).strip().lstrip("@")
+    x_handle = normalize_x_handle(data.get("x_handle", ""))
     rootdata_url = str(data.get("rootdata_url", "")).strip()
     if not x_handle:
         raise ValueError("x_handle is required")
