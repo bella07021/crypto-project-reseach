@@ -23,12 +23,20 @@
         <header class="topbar">
           <div>
             <h1>加密项目调研评分</h1>
-            <p>输入 X 链接和 RootData 链接，生成评分、TGE 判断和上线交易所跟踪。</p>
+            <p>输入 Token Symbol、项目名、X 链接和 RootData 链接，生成评分、TGE 判断和上线交易所跟踪。</p>
           </div>
         </header>
 
         <section class="view active" id="addView">
           <form class="input-bar" id="scoreForm">
+            <label>
+              <span>Token Symbol</span>
+              <input name="token_ticker" placeholder="NEX" required />
+            </label>
+            <label>
+              <span>项目名</span>
+              <input name="project_name" placeholder="Nexus" required />
+            </label>
             <label>
               <span>X 链接</span>
               <input name="x_handle" placeholder="https://x.com/NexusLabs" required />
@@ -47,7 +55,7 @@
           <div class="dashboard-header">
             <div>
               <h2>Dashboard</h2>
-              <p>每个项目一行，点击 ticker 打开评分页。</p>
+              <p>每个项目一行，点击 Token Symbol 打开评分页。</p>
             </div>
             <button type="button" id="refreshDashboard">刷新</button>
           </div>
@@ -55,7 +63,8 @@
             <table class="dashboard-table">
               <thead>
                 <tr>
-                  <th>Token</th>
+                  <th>Token Symbol</th>
+                  <th>项目名</th>
                   <th>总分</th>
                   <th>团队</th>
                   <th>融资</th>
@@ -65,7 +74,7 @@
                 </tr>
               </thead>
               <tbody id="dashboardRows">
-                <tr><td colspan="7">暂无项目。</td></tr>
+                <tr><td colspan="8">暂无项目。</td></tr>
               </tbody>
             </table>
           </div>

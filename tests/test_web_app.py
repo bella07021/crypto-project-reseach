@@ -26,6 +26,8 @@ class WebAppTests(unittest.TestCase):
             {
                 "x_handle": "@NexusLabs",
                 "rootdata_url": "https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D",
+                "token_ticker": "nex",
+                "project_name": "Nexus",
                 "bucket": "infra",
                 "tge_signals": ["tokenomics", "airdrop"],
                 "listing_signals": "binance_alpha",
@@ -34,6 +36,8 @@ class WebAppTests(unittest.TestCase):
         )
 
         self.assertEqual(payload.x_handle, "NexusLabs")
+        self.assertEqual(payload.token_ticker, "NEX")
+        self.assertEqual(payload.project_name, "Nexus")
         self.assertEqual(payload.bucket, "infra")
         self.assertEqual(payload.tge_signal, ["tokenomics", "airdrop"])
         self.assertEqual(payload.listing_signal, ["binance_alpha"])
@@ -76,6 +80,8 @@ class WebAppTests(unittest.TestCase):
                     {
                         "x_handle": "DemoX",
                         "rootdata_url": "https://rootdata.example/demo",
+                        "token_ticker": "demo",
+                        "project_name": "Demo Project",
                         "team_raw_score": "80",
                         "team_background": "international",
                         "funding_amount_usd": "500000000",
@@ -90,6 +96,8 @@ class WebAppTests(unittest.TestCase):
 
             self.assertTrue(result["ok"])
             self.assertEqual(result["assessment"]["x_handle"], "DemoX")
+            self.assertEqual(result["assessment"]["token_ticker"], "DEMO")
+            self.assertEqual(result["assessment"]["project_name"], "Demo Project")
             self.assertIn("total_score", result["assessment"])
             self.assertTrue(workbook.exists())
             json.loads(json.dumps(result))
@@ -424,14 +432,18 @@ class WebAppTests(unittest.TestCase):
                 {
                     "x_handle": "@NexusLabs",
                     "rootdata_url": "https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D",
+                    "token_ticker": "nex",
+                    "project_name": "Nexus",
                 }
             )
 
         self.assertTrue(result["created"])
         self.assertEqual(result["request"]["status"], "pending")
         self.assertEqual(result["request"]["x_handle"], "NexusLabs")
+        self.assertEqual(result["request"]["token_ticker"], "NEX")
+        self.assertEqual(result["request"]["project_name"], "Nexus")
         self.assertEqual(len(writes[0][0]), 1)
-        self.assertEqual(writes[0][1], "Add project request for NexusLabs")
+        self.assertEqual(writes[0][1], "Add project request for NEX")
 
     def test_create_project_request_refreshes_completed_project_with_new_request_id(self):
         writes = []
@@ -465,6 +477,8 @@ class WebAppTests(unittest.TestCase):
             {
                 "request_id": "pending1",
                 "status": "pending",
+                "token_ticker": "NEW",
+                "project_name": "New Project",
                 "x_handle": "NewProject",
                 "rootdata_url": "https://cn.rootdata.com/projects/detail/New?k=MQ%3D%3D",
                 "requested_at": "2026-05-25T09:00:00+00:00",
@@ -489,7 +503,8 @@ class WebAppTests(unittest.TestCase):
 
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["request_status"], "pending")
-        self.assertEqual(rows[0]["token_ticker"], "NewProject")
+        self.assertEqual(rows[0]["token_ticker"], "NEW")
+        self.assertEqual(rows[0]["project_name"], "New Project")
 
     def test_request_status_payload_returns_done_assessment(self):
         requests = [

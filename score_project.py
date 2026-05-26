@@ -28,6 +28,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Score a crypto project research target.")
     parser.add_argument("--x-handle", required=True, help="Project Twitter/X handle.")
     parser.add_argument("--rootdata-url", required=True, help="Project RootData URL.")
+    parser.add_argument("--token-ticker", default="", help="Project token symbol, for example NEX.")
+    parser.add_argument("--project-name", default="", help="Project name.")
     parser.add_argument("--team-raw-score", type=float, default=0.0)
     parser.add_argument("--team-background", default="unknown")
     parser.add_argument("--funding-amount-usd", type=float, default=0.0)
@@ -114,11 +116,13 @@ def build_assessment(args: argparse.Namespace) -> dict[str, object]:
         "assessed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "x_handle": (live_detail.x_handle if live_detail and live_detail.x_handle else args.x_handle.strip().lstrip("@")),
         "rootdata_url": args.rootdata_url,
-        "project_name": (live_detail.project_name if live_detail and live_detail.project_name else project_row.get("project_name", "")),
+        "project_name": (
+            str(getattr(args, "project_name", "") or "").strip()
+            or (live_detail.project_name if live_detail and live_detail.project_name else project_row.get("project_name", ""))
+        ),
         "token_ticker": (
-            live_detail.token_ticker
-            if live_detail and live_detail.token_ticker
-            else project_row.get("token_symbol", "")
+            str(getattr(args, "token_ticker", "") or "").strip().upper()
+            or (live_detail.token_ticker if live_detail and live_detail.token_ticker else project_row.get("token_symbol", ""))
         ),
         "bucket": bucket,
         "x_followers": followers or 0,

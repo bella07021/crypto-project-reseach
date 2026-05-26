@@ -88,7 +88,7 @@ h1 { font-size: 28px; line-height: 1.2; }
 
 .input-bar {
   display: grid;
-  grid-template-columns: 260px minmax(360px, 1fr) auto;
+  grid-template-columns: 140px 200px 260px minmax(320px, 1fr) auto;
   gap: 12px;
   align-items: end;
   padding: 16px;

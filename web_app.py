@@ -53,6 +53,8 @@ def runtime_workbook_path() -> Path:
 class ScorePayload:
     x_handle: str
     rootdata_url: str
+    token_ticker: str = ""
+    project_name: str = ""
     team_raw_score: float = 0.0
     team_background: str = "unknown"
     funding_amount_usd: float = 0.0
@@ -112,6 +114,8 @@ def parse_score_payload(data: dict[str, Any]) -> ScorePayload:
     return ScorePayload(
         x_handle=x_handle,
         rootdata_url=rootdata_url,
+        token_ticker=str(data.get("token_ticker") or data.get("token_symbol") or "").strip().upper(),
+        project_name=str(data.get("project_name") or "").strip(),
         team_raw_score=as_float(data.get("team_raw_score")),
         team_background=str(data.get("team_background") or "unknown").strip(),
         funding_amount_usd=as_float(data.get("funding_amount_usd")),
@@ -132,6 +136,8 @@ def namespace_from_payload(payload: ScorePayload) -> argparse.Namespace:
     return argparse.Namespace(
         x_handle=payload.x_handle,
         rootdata_url=payload.rootdata_url,
+        token_ticker=payload.token_ticker,
+        project_name=payload.project_name,
         team_raw_score=payload.team_raw_score,
         team_background=payload.team_background,
         funding_amount_usd=payload.funding_amount_usd,
@@ -341,6 +347,8 @@ def parse_iso_datetime(value: str) -> datetime | None:
 def create_project_request(data: dict[str, Any]) -> dict[str, Any]:
     x_handle = normalize_x_handle(data.get("x_handle", ""))
     rootdata_url = str(data.get("rootdata_url", "")).strip()
+    token_ticker = str(data.get("token_ticker") or data.get("token_symbol") or "").strip().upper()
+    project_name = str(data.get("project_name") or "").strip()
     if not x_handle:
         raise ValueError("x_handle is required")
     if not rootdata_url:
@@ -361,13 +369,16 @@ def create_project_request(data: dict[str, Any]) -> dict[str, Any]:
         "request_id": project_request_id(request_key, timestamp),
         "request_key": request_key,
         "status": "pending",
+        "token_ticker": token_ticker,
+        "project_name": project_name,
         "x_handle": x_handle,
         "rootdata_url": rootdata_url,
         "requested_at": timestamp,
         "updated_at": timestamp,
     }
     rows.append(request)
-    write_github_requests(rows, f"Add project request for {x_handle}", sha)
+    label = token_ticker or project_name or x_handle
+    write_github_requests(rows, f"Add project request for {label}", sha)
     return {"ok": True, "created": True, "request": request}
 
 
@@ -787,8 +798,8 @@ def request_dashboard_rows(requests: list[dict[str, Any]], history: list[dict[st
         x_handle = str(request.get("x_handle", ""))
         rows.append(
             {
-                "token_ticker": x_handle or "--",
-                "project_name": "",
+                "token_ticker": request.get("token_ticker") or x_handle or "--",
+                "project_name": request.get("project_name") or "",
                 "x_handle": x_handle,
                 "rootdata_url": request.get("rootdata_url", ""),
                 "total_score": "",

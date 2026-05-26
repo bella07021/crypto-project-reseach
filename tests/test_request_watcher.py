@@ -11,6 +11,8 @@ class RequestWatcherTests(unittest.TestCase):
             {
                 "request_id": "req1",
                 "status": "pending",
+                "token_ticker": "NEX",
+                "project_name": "Nexus",
                 "x_handle": "NexusLabs",
                 "rootdata_url": "https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D",
             }
@@ -25,13 +27,22 @@ class RequestWatcherTests(unittest.TestCase):
         ), patch(
             "request_watcher.score_payload",
             return_value={"assessment": {"token_ticker": "NEX", "total_score": 48.02}},
-        ):
+        ) as mocked_score:
             processed = process_next_request()
 
         self.assertTrue(processed)
+        mocked_score.assert_called_once_with(
+            {
+                "token_ticker": "NEX",
+                "project_name": "Nexus",
+                "x_handle": "NexusLabs",
+                "rootdata_url": "https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D",
+            }
+        )
         self.assertEqual(writes[0][0][0]["status"], "processing")
         self.assertEqual(writes[-1][0][0]["status"], "done")
         self.assertEqual(writes[-1][0][0]["token_ticker"], "NEX")
+        self.assertEqual(writes[-1][0][0]["project_name"], "Nexus")
         self.assertEqual(writes[-1][0][0]["total_score"], 48.02)
 
     def test_process_next_request_marks_failed_on_error(self):

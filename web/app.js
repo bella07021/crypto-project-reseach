@@ -33,6 +33,8 @@ function tokenLabel(assessment) {
 function formPayload() {
   const data = new FormData(form);
   return {
+    token_ticker: data.get("token_ticker"),
+    project_name: data.get("project_name"),
     x_handle: data.get("x_handle"),
     rootdata_url: data.get("rootdata_url"),
   };
@@ -278,6 +280,8 @@ function renderRequestStatus(request, created) {
         <span>${request.status || "pending"}</span>
       </div>
       <div class="detail-grid">
+        <div><span>Token Symbol</span><strong>${request.token_ticker || "--"}</strong></div>
+        <div><span>项目名</span><strong>${request.project_name || "--"}</strong></div>
         <div><span>X</span><strong>@${request.x_handle || "--"}</strong></div>
         <div><span>RootData</span><strong>${request.rootdata_url || "--"}</strong></div>
       </div>
@@ -368,13 +372,14 @@ function tgeSummary(row) {
 function renderDashboard() {
   dashboardBody.innerHTML = "";
   if (!state.dashboardRows.length) {
-    dashboardBody.innerHTML = '<tr><td colspan="7">暂无项目。</td></tr>';
+    dashboardBody.innerHTML = '<tr><td colspan="8">暂无项目。</td></tr>';
     return;
   }
   for (const row of state.dashboardRows) {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td><button type="button" class="ticker-link">${row.token_ticker || "--"}</button></td>
+      <td>${row.project_name || "--"}</td>
       <td>${numberText(row.total_score)}</td>
       <td>${numberText(row.team_score)}</td>
       <td>${numberText(row.funding_score)}</td>

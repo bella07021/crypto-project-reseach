@@ -29,13 +29,16 @@ def process_next_request() -> bool:
     try:
         result = score_payload(
             {
+                "token_ticker": request.get("token_ticker", ""),
+                "project_name": request.get("project_name", ""),
                 "x_handle": request.get("x_handle", ""),
                 "rootdata_url": request.get("rootdata_url", ""),
             }
         )
         assessment = result.get("assessment", {})
         request["status"] = "done"
-        request["token_ticker"] = assessment.get("token_ticker") or assessment.get("project_name") or assessment.get("x_handle")
+        request["token_ticker"] = assessment.get("token_ticker") or request.get("token_ticker") or assessment.get("project_name") or assessment.get("x_handle")
+        request["project_name"] = assessment.get("project_name") or request.get("project_name", "")
         request["total_score"] = assessment.get("total_score", 0)
         request["completed_at"] = now_iso()
         request.pop("error", None)
