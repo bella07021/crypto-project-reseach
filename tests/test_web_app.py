@@ -19,6 +19,7 @@ from web_app import (
     parse_score_payload,
     score_payload,
     handle_post_api,
+    ROOT,
 )
 
 
@@ -33,7 +34,6 @@ class WebAppTests(unittest.TestCase):
         with patch(
             "web_app.run_exchange_listing_manual_sync",
             return_value={"ok": True, "status": "success"},
-            create=True,
         ) as sync_mock, patch(
             "web_app.score_payload",
             return_value={"ok": True, "assessment": {"x_handle": "DemoX"}},
@@ -47,6 +47,17 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(score_status, 200)
         self.assertTrue(score_response["ok"])
         score_mock.assert_called_once_with(score_body)
+
+    def test_exchange_listing_manual_sync_wrapper_uses_default_db_path_and_exchanges(self):
+        from web_app import run_exchange_listing_manual_sync
+
+        body = {"exchanges": ["coinbase"]}
+
+        with patch("web_app.run_manual_sync", return_value={"ok": True}) as mock:
+            result = run_exchange_listing_manual_sync(body)
+
+        self.assertTrue(result["ok"])
+        mock.assert_called_once_with(ROOT / "data" / "exchange_listings.sqlite", exchanges=["coinbase"])
 
     def test_score_endpoint_delegates_to_score_payload(self):
         body = {
