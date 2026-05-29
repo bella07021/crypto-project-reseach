@@ -24,7 +24,7 @@ _UTC_TIME_RE = re.compile(
     re.IGNORECASE,
 )
 _SIMPLE_LISTING_SYMBOL_RE = re.compile(
-    r"\b(?i:will list|to list|listing of)\s+([A-Z][A-Z0-9]{1,11})\b",
+    r"\b(?i:will list|to list|listing of|will launch)\s+([A-Z][A-Z0-9]{1,11})(?:/[A-Z]{2,6})?\b",
 )
 _PAIR_RE = re.compile(r"\b([A-Z][A-Z0-9]{1,11})/(USDT|USDC|USD|BTC|ETH|KRW|EUR|TRY|FDUSD)\b")
 
@@ -108,8 +108,10 @@ def _looks_like_announcement_listing_signal(text: str) -> bool:
         keyword in lowered
         for keyword in (
             "will list",
+            "will launch",
             "to list",
             "listing of",
+            "listed on",
             "open trading",
             "spot trading",
             "start trading",

@@ -14,6 +14,9 @@
     <string>/Users/apple/Documents/New project/exchange_listing_sync.py</string>
     <string>--mode</string>
     <string>incremental</string>
+    <string>--live</string>
+    <string>--limit</string>
+    <string>30</string>
   </array>
 
   <key>RunAtLoad</key>

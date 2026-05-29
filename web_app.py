@@ -26,7 +26,8 @@ from score_project import (
     load_benchmarks,
     write_workbook,
 )
-from exchange_listings.sync import run_manual_sync
+from exchange_listings.adapters import fetch_live_sources
+from exchange_listings.sync import run_sync
 from live_project_fetcher import clean_html_text, fetch_text, normalize_rootdata_url, parse_human_date
 
 
@@ -906,9 +907,18 @@ def request_status_payload(
 
 
 def run_exchange_listing_manual_sync(data: dict[str, Any]) -> dict[str, Any]:
-    return run_manual_sync(
+    limit = int(data.get("limit") or 30)
+
+    def fetcher(exchange, *, mode, months):
+        return fetch_live_sources(exchange, mode=mode, months=months, limit=limit)
+
+    return run_sync(
         ROOT / "data" / "exchange_listings.sqlite",
+        trigger_type="manual",
+        mode="incremental",
+        months=3,
         exchanges=data.get("exchanges"),
+        fetcher=fetcher,
     )
 
 

@@ -61,9 +61,11 @@ The local exchange listing sync writes listing signals into `data/exchange_listi
 Run backfill or incremental syncs by hand:
 
 ```bash
-python3 exchange_listing_sync.py --mode backfill --months 3
-python3 exchange_listing_sync.py --mode incremental
+python3 exchange_listing_sync.py --mode backfill --months 3 --live --limit 30
+python3 exchange_listing_sync.py --mode incremental --live --limit 30
 ```
+
+Use `--limit` to cap the maximum live source candidates per exchange during pilot runs, for example `--limit 3`.
 
 Install the daily incremental sync as a macOS LaunchAgent:
 

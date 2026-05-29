@@ -53,11 +53,17 @@ class WebAppTests(unittest.TestCase):
 
         body = {"exchanges": ["coinbase"]}
 
-        with patch("web_app.run_manual_sync", return_value={"ok": True}) as mock:
+        with patch("web_app.run_sync", return_value={"ok": True}) as mock:
             result = run_exchange_listing_manual_sync(body)
 
         self.assertTrue(result["ok"])
-        mock.assert_called_once_with(ROOT / "data" / "exchange_listings.sqlite", exchanges=["coinbase"])
+        _, kwargs = mock.call_args
+        self.assertEqual(ROOT / "data" / "exchange_listings.sqlite", mock.call_args.args[0])
+        self.assertEqual("manual", kwargs["trigger_type"])
+        self.assertEqual("incremental", kwargs["mode"])
+        self.assertEqual(3, kwargs["months"])
+        self.assertEqual(["coinbase"], kwargs["exchanges"])
+        self.assertIsNotNone(kwargs["fetcher"])
 
     def test_score_endpoint_delegates_to_score_payload(self):
         body = {

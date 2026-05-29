@@ -290,3 +290,36 @@ class ExchangeListingSyncTests(unittest.TestCase):
         self.assertFalse(summary["ok"])
         self.assertEqual("failed", summary["status"])
         self.assertEqual("Unknown exchange: notarealexchange", summary["error"])
+
+    def test_cli_live_mode_uses_live_fetcher_with_limit(self):
+        calls = []
+
+        def fake_live_fetcher(exchange, *, mode, months, limit):
+            calls.append((exchange, mode, months, limit))
+            return []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "exchange_listings.sqlite"
+            stdout = StringIO()
+            import exchange_listing_sync
+
+            with patch("exchange_listing_sync.fetch_live_sources", fake_live_fetcher):
+                with redirect_stdout(stdout):
+                    exit_code = exchange_listing_sync.main(
+                        [
+                            "--mode",
+                            "incremental",
+                            "--db",
+                            str(db_path),
+                            "--exchange",
+                            "okx",
+                            "--live",
+                            "--limit",
+                            "2",
+                        ]
+                    )
+
+        summary = json.loads(stdout.getvalue())
+        self.assertEqual(0, exit_code)
+        self.assertTrue(summary["ok"])
+        self.assertEqual([("okx", "incremental", 3, 2)], calls)

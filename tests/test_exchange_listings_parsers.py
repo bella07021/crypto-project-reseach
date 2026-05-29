@@ -261,3 +261,34 @@ class ExchangeListingParserTests(unittest.TestCase):
 
         self.assertEqual(1, len(events))
         self.assertEqual("ABC", events[0]["token_symbol"])
+
+    def test_listed_on_announcement_language_is_a_listing_signal(self):
+        raw_source = {
+            "exchange": "kucoin",
+            "source_type": "exchange_announcement",
+            "source_url": "https://www.kucoin.com/announcement/en-world-premiere-qait-qait-listed-on-kucoin",
+            "title": "World Premiere: QAIT (QAIT) Listed on KuCoin",
+            "raw_text": "World Premiere: QAIT (QAIT) Listed on KuCoin.",
+            "published_at": "2026-05-28T00:00:00Z",
+        }
+
+        events = parse_events(raw_source, now=self.fixed_now)
+
+        self.assertEqual(1, len(events))
+        self.assertEqual("QAIT", events[0]["token_symbol"])
+
+    def test_will_launch_spot_pair_language_extracts_base_symbol(self):
+        raw_source = {
+            "exchange": "okx",
+            "source_type": "exchange_announcement",
+            "source_url": "https://www.okx.com/help/okx-will-launch-ai-usd-for-spot-trading",
+            "title": "OKX will launch AI/USD for spot trading",
+            "raw_text": "OKX will launch AI/USD for spot trading.",
+            "published_at": "2026-05-22T00:00:00Z",
+        }
+
+        events = parse_events(raw_source, now=self.fixed_now)
+
+        self.assertEqual(1, len(events))
+        self.assertEqual("AI", events[0]["token_symbol"])
+        self.assertEqual(["AI/USD"], events[0]["pairs"])
