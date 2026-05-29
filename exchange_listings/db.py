@@ -33,6 +33,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_normalized_assets_symbol_name
 ON normalized_assets(canonical_symbol, project_name)
 WHERE (slug IS NULL OR slug = '') AND project_name IS NOT NULL AND project_name != '';
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_normalized_assets_symbol_only
+ON normalized_assets(canonical_symbol)
+WHERE (slug IS NULL OR slug = '') AND (project_name IS NULL OR project_name = '');
+
 CREATE TABLE IF NOT EXISTS raw_sources (
     id INTEGER PRIMARY KEY,
     exchange TEXT NOT NULL,
@@ -124,12 +128,26 @@ CREATE TABLE IF NOT EXISTS source_cursors (
     updated_at TEXT NOT NULL,
     PRIMARY KEY (exchange, source_type)
 );
+
+CREATE TABLE IF NOT EXISTS sync_locks (
+    lock_name TEXT PRIMARY KEY,
+    run_id INTEGER NOT NULL REFERENCES sync_runs(id),
+    locked_at TEXT NOT NULL
+);
 """
+
+SYNC_LOCK_NAME = "exchange_listing_sync"
+
+
+def connect(path: Path | str) -> sqlite3.Connection:
+    conn = sqlite3.connect(Path(path))
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
 
 
 def init_db(path: Path | str) -> None:
     db_path = Path(path)
-    with sqlite3.connect(db_path) as conn:
+    with connect(db_path) as conn:
         conn.executescript(SCHEMA_SQL)
 
 
@@ -194,14 +212,15 @@ def upsert_raw_source(conn, raw_source: dict) -> int:
     content_hash = raw_source.get("content_hash") or stable_content_hash(raw_source)
     fetched_at = raw_source.get("fetched_at") or _utc_now()
 
-    existing_id = None
+    matches = []
     if source_url:
         row = conn.execute(
             "SELECT id FROM raw_sources WHERE exchange = ? AND source_url = ?",
             (exchange, source_url),
         ).fetchone()
-        existing_id = row[0] if row else None
-    if existing_id is None and external_id:
+        if row:
+            matches.append(row[0])
+    if external_id:
         row = conn.execute(
             """
             SELECT id
@@ -210,13 +229,17 @@ def upsert_raw_source(conn, raw_source: dict) -> int:
             """,
             (exchange, source_type, external_id),
         ).fetchone()
-        existing_id = row[0] if row else None
-    if existing_id is None:
+        if row:
+            matches.append(row[0])
+    if not matches:
         row = conn.execute(
             "SELECT id FROM raw_sources WHERE exchange = ? AND content_hash = ?",
             (exchange, content_hash),
         ).fetchone()
-        existing_id = row[0] if row else None
+        if row:
+            matches.append(row[0])
+
+    existing_id = matches[0] if matches else None
 
     values = {
         "exchange": exchange,
@@ -235,6 +258,16 @@ def upsert_raw_source(conn, raw_source: dict) -> int:
     }
 
     if existing_id is not None:
+        for duplicate_id in sorted(set(matches) - {existing_id}):
+            conn.execute(
+                """
+                UPDATE raw_sources
+                SET source_url = NULL,
+                    external_id = NULL
+                WHERE id = ?
+                """,
+                (duplicate_id,),
+            )
         conn.execute(
             """
             UPDATE raw_sources
@@ -330,6 +363,18 @@ def upsert_normalized_asset(conn, asset: dict) -> int:
               AND (slug IS NULL OR slug = '')
             """,
             (canonical_symbol, project_name),
+        ).fetchone()
+        existing_id = row[0] if row else None
+    else:
+        row = conn.execute(
+            """
+            SELECT id
+            FROM normalized_assets
+            WHERE canonical_symbol = ?
+              AND (slug IS NULL OR slug = '')
+              AND (project_name IS NULL OR project_name = '')
+            """,
+            (canonical_symbol,),
         ).fetchone()
         existing_id = row[0] if row else None
 
@@ -483,9 +528,14 @@ def upsert_listing_event(conn, event: dict) -> int:
         for field in ("trading_start_time", "deposit_start_time", "withdrawal_start_time")
     )
     higher_precedence = values["source_precedence"] > existing_values["source_precedence"]
+    same_precedence = values["source_precedence"] == existing_values["source_precedence"]
+    corrects_timing = any(
+        same_precedence and values[field] is not None and values[field] != existing_values[field]
+        for field in ("trading_start_time", "deposit_start_time", "withdrawal_start_time")
+    )
     advances_status = _status_rank(values["status"]) > _status_rank(existing_values["status"])
 
-    if higher_precedence or fills_timing or advances_status:
+    if higher_precedence or fills_timing or corrects_timing or advances_status:
         merged = existing_values.copy()
         if higher_precedence:
             _copy_non_empty_incoming(merged, values, columns)
@@ -493,7 +543,7 @@ def upsert_listing_event(conn, event: dict) -> int:
             if advances_status:
                 merged["status"] = values["status"]
             for field in ("trading_start_time", "deposit_start_time", "withdrawal_start_time"):
-                if existing_values[field] is None and values[field] is not None:
+                if values[field] is not None and (existing_values[field] is None or same_precedence):
                     merged[field] = values[field]
         merged["created_at"] = existing_values["created_at"]
         merged["updated_at"] = now
@@ -528,47 +578,109 @@ def upsert_listing_event(conn, event: dict) -> int:
 def start_sync_run(conn, trigger_type: str, exchanges=(), now=None) -> dict:
     started_at = _to_utc_iso(now)
     current_time = _parse_utc_iso(started_at)
-    running_rows = conn.execute(
-        """
-        SELECT id, started_at
-        FROM sync_runs
-        WHERE status = 'running'
-        ORDER BY started_at ASC
-        """
-    ).fetchall()
+    started_transaction = not conn.in_transaction
+    if started_transaction:
+        conn.execute("BEGIN IMMEDIATE")
 
-    for run_id, row_started_at in running_rows:
-        age = current_time - _parse_utc_iso(row_started_at)
-        if age < timedelta(hours=2):
-            return {
-                "status": "skipped",
-                "run_id": run_id,
-                "skipped_reason": "fresh_running_sync",
-            }
+    try:
+        lock_row = conn.execute(
+            """
+            SELECT sync_locks.run_id, sync_locks.locked_at, sync_runs.status, sync_runs.started_at
+            FROM sync_locks
+            LEFT JOIN sync_runs ON sync_runs.id = sync_locks.run_id
+            WHERE sync_locks.lock_name = ?
+            """,
+            (SYNC_LOCK_NAME,),
+        ).fetchone()
+        if lock_row is not None:
+            run_id, locked_at, status, run_started_at = lock_row
+            reference_time = run_started_at or locked_at
+            age = current_time - _parse_utc_iso(reference_time)
+            if status == "running" and age < timedelta(hours=2):
+                if started_transaction:
+                    conn.commit()
+                return {
+                    "status": "skipped",
+                    "run_id": run_id,
+                    "skipped_reason": "fresh_running_sync",
+                }
+            if status == "running":
+                conn.execute(
+                    """
+                    UPDATE sync_runs
+                    SET status = 'failed',
+                        finished_at = ?,
+                        error = ?
+                    WHERE id = ?
+                    """,
+                    (started_at, "stale running sync exceeded 2 hours", run_id),
+                )
+            conn.execute("DELETE FROM sync_locks WHERE lock_name = ?", (SYNC_LOCK_NAME,))
+
+        running_rows = conn.execute(
+            """
+            SELECT id, started_at
+            FROM sync_runs
+            WHERE status = 'running'
+            ORDER BY started_at ASC
+            """
+        ).fetchall()
+
+        for run_id, row_started_at in running_rows:
+            age = current_time - _parse_utc_iso(row_started_at)
+            if age < timedelta(hours=2):
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO sync_locks (lock_name, run_id, locked_at)
+                    VALUES (?, ?, ?)
+                    """,
+                    (SYNC_LOCK_NAME, run_id, row_started_at),
+                )
+                if started_transaction:
+                    conn.commit()
+                return {
+                    "status": "skipped",
+                    "run_id": run_id,
+                    "skipped_reason": "fresh_running_sync",
+                }
+            conn.execute(
+                """
+                UPDATE sync_runs
+                SET status = 'failed',
+                    finished_at = ?,
+                    error = ?
+                WHERE id = ?
+                """,
+                (started_at, "stale running sync exceeded 2 hours", run_id),
+            )
+
+        cursor = conn.execute(
+            """
+            INSERT INTO sync_runs (
+                trigger_type,
+                started_at,
+                status,
+                exchanges_requested
+            )
+            VALUES (?, ?, 'running', ?)
+            """,
+            (trigger_type, started_at, _json_dumps(list(exchanges))),
+        )
+        run_id = cursor.lastrowid
         conn.execute(
             """
-            UPDATE sync_runs
-            SET status = 'failed',
-                finished_at = ?,
-                error = ?
-            WHERE id = ?
+            INSERT INTO sync_locks (lock_name, run_id, locked_at)
+            VALUES (?, ?, ?)
             """,
-            (started_at, "stale running sync exceeded 2 hours", run_id),
+            (SYNC_LOCK_NAME, run_id, started_at),
         )
-
-    cursor = conn.execute(
-        """
-        INSERT INTO sync_runs (
-            trigger_type,
-            started_at,
-            status,
-            exchanges_requested
-        )
-        VALUES (?, ?, 'running', ?)
-        """,
-        (trigger_type, started_at, _json_dumps(list(exchanges))),
-    )
-    return {"status": "running", "run_id": cursor.lastrowid}
+        if started_transaction:
+            conn.commit()
+        return {"status": "running", "run_id": run_id}
+    except Exception:
+        if started_transaction:
+            conn.rollback()
+        raise
 
 
 def finish_sync_run(
@@ -603,6 +715,7 @@ def finish_sync_run(
             run_id,
         ),
     )
+    conn.execute("DELETE FROM sync_locks WHERE run_id = ?", (run_id,))
 
 
 def record_exchange_result(

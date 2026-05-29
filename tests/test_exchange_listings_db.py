@@ -22,7 +22,7 @@ class ExchangeListingDbTests(unittest.TestCase):
     def open_initialized_db(self, tmpdir):
         db_path = Path(tmpdir) / "exchange_listings.sqlite"
         init_db(db_path)
-        return sqlite3.connect(db_path)
+        return db.connect(db_path)
 
     def test_init_db_creates_expected_tables(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -48,8 +48,31 @@ class ExchangeListingDbTests(unittest.TestCase):
                 "sync_runs",
                 "sync_run_exchange_results",
                 "source_cursors",
+                "sync_locks",
             }.issubset(tables)
         )
+
+    def test_repository_connection_enforces_listing_event_foreign_keys(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "exchange_listings.sqlite"
+            init_db(db_path)
+
+            with db.connect(db_path) as conn:
+                with self.assertRaises(sqlite3.IntegrityError):
+                    db.upsert_listing_event(
+                        conn,
+                        {
+                            "exchange": "coinbase",
+                            "normalized_asset_id": 999,
+                            "project_name": "Missing Network",
+                            "token_symbol": "MISS",
+                            "listing_type": LISTING_TYPE_SPOT,
+                            "event_family": EVENT_FAMILY_SPOT_LISTING,
+                            "event_kind": "listing_announcement",
+                            "status": STATUS_ANNOUNCED,
+                            "source_precedence": SOURCE_PRECEDENCE_BLOG,
+                        },
+                    )
 
     def test_upsert_raw_source_dedupes_by_exchange_and_source_url(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -115,6 +138,66 @@ class ExchangeListingDbTests(unittest.TestCase):
 
         self.assertEqual(first_id, second_id)
 
+    def test_upsert_raw_source_handles_url_and_external_id_collision_deterministically(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.open_initialized_db(tmpdir) as conn:
+                url_row_id = db.upsert_raw_source(
+                    conn,
+                    {
+                        "exchange": "coinbase",
+                        "source_type": "official_x",
+                        "source_url": "https://x.com/CoinbaseMarkets/status/abc",
+                        "title": "ABC roadmap by URL",
+                        "raw_text": "ABC has been added to the roadmap.",
+                        "fetched_at": "2026-05-29T00:00:00Z",
+                    },
+                )
+                external_id_row_id = db.upsert_raw_source(
+                    conn,
+                    {
+                        "exchange": "coinbase",
+                        "source_type": "official_x",
+                        "external_id": "abc",
+                        "title": "ABC roadmap by id",
+                        "raw_text": "ABC has been added to the roadmap.",
+                        "fetched_at": "2026-05-29T00:01:00Z",
+                    },
+                )
+
+                canonical_id = db.upsert_raw_source(
+                    conn,
+                    {
+                        "exchange": "coinbase",
+                        "source_type": "official_x",
+                        "source_url": "https://x.com/CoinbaseMarkets/status/abc",
+                        "external_id": "abc",
+                        "title": "ABC roadmap unified",
+                        "raw_text": "ABC has been added to the roadmap.",
+                        "fetched_at": "2026-05-29T00:02:00Z",
+                    },
+                )
+                canonical_row = conn.execute(
+                    """
+                    SELECT source_url, external_id
+                    FROM raw_sources
+                    WHERE id = ?
+                    """,
+                    (canonical_id,),
+                ).fetchone()
+                other_row = conn.execute(
+                    """
+                    SELECT source_url, external_id
+                    FROM raw_sources
+                    WHERE id = ?
+                    """,
+                    (external_id_row_id,),
+                ).fetchone()
+
+        self.assertEqual(url_row_id, canonical_id)
+        self.assertNotEqual(url_row_id, external_id_row_id)
+        self.assertEqual(("https://x.com/CoinbaseMarkets/status/abc", "abc"), canonical_row)
+        self.assertEqual((None, None), other_row)
+
     def test_upsert_normalized_asset_creates_low_confidence_asset_from_symbol_and_name(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             with self.open_initialized_db(tmpdir) as conn:
@@ -136,6 +219,16 @@ class ExchangeListingDbTests(unittest.TestCase):
                 ).fetchone()
 
         self.assertEqual(("ABC", "ABC Network", "abc-network", "low"), row)
+
+    def test_upsert_normalized_asset_dedupes_repeated_symbol_only_asset(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.open_initialized_db(tmpdir) as conn:
+                first_id = db.upsert_normalized_asset(conn, {"token_symbol": "abc"})
+                second_id = db.upsert_normalized_asset(conn, {"token_symbol": "ABC"})
+                row_count = conn.execute("SELECT COUNT(*) FROM normalized_assets").fetchone()[0]
+
+        self.assertEqual(first_id, second_id)
+        self.assertEqual(1, row_count)
 
     def test_upsert_listing_event_creates_coinbase_roadmap_event(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -427,6 +520,116 @@ class ExchangeListingDbTests(unittest.TestCase):
             row,
         )
 
+    def test_upsert_listing_event_updates_corrected_timing_at_same_precedence(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.open_initialized_db(tmpdir) as conn:
+                asset_id = db.upsert_normalized_asset(
+                    conn,
+                    {"token_symbol": "ABC", "project_name": "ABC Network"},
+                )
+                event_id = db.upsert_listing_event(
+                    conn,
+                    {
+                        "exchange": "coinbase",
+                        "normalized_asset_id": asset_id,
+                        "project_name": "ABC Network",
+                        "token_symbol": "ABC",
+                        "listing_type": LISTING_TYPE_SPOT,
+                        "event_family": EVENT_FAMILY_SPOT_LISTING,
+                        "event_kind": "listing_announcement",
+                        "status": STATUS_TRADING_SOON,
+                        "trading_start_time": "2026-05-30T16:00:00Z",
+                        "source_type": "exchange_announcement",
+                        "confidence": "high",
+                        "source_precedence": SOURCE_PRECEDENCE_ANNOUNCEMENT,
+                    },
+                )
+                same_event_id = db.upsert_listing_event(
+                    conn,
+                    {
+                        "exchange": "coinbase",
+                        "normalized_asset_id": asset_id,
+                        "project_name": "ABC Network",
+                        "token_symbol": "ABC",
+                        "listing_type": LISTING_TYPE_SPOT,
+                        "event_family": EVENT_FAMILY_SPOT_LISTING,
+                        "event_kind": "listing_announcement",
+                        "status": STATUS_TRADING_SOON,
+                        "trading_start_time": "2026-05-30T17:00:00Z",
+                        "source_type": "exchange_announcement",
+                        "confidence": "high",
+                        "source_precedence": SOURCE_PRECEDENCE_ANNOUNCEMENT,
+                    },
+                )
+                row = conn.execute(
+                    "SELECT trading_start_time, source_precedence FROM listing_events WHERE id = ?",
+                    (event_id,),
+                ).fetchone()
+
+        self.assertEqual(event_id, same_event_id)
+        self.assertEqual(("2026-05-30T17:00:00Z", SOURCE_PRECEDENCE_ANNOUNCEMENT), row)
+
+    def test_upsert_listing_event_ignores_lower_precedence_corrected_populated_timing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.open_initialized_db(tmpdir) as conn:
+                asset_id = db.upsert_normalized_asset(
+                    conn,
+                    {"token_symbol": "ABC", "project_name": "ABC Network"},
+                )
+                event_id = db.upsert_listing_event(
+                    conn,
+                    {
+                        "exchange": "coinbase",
+                        "normalized_asset_id": asset_id,
+                        "project_name": "ABC Network",
+                        "token_symbol": "ABC",
+                        "listing_type": LISTING_TYPE_SPOT,
+                        "event_family": EVENT_FAMILY_SPOT_LISTING,
+                        "event_kind": "listing_announcement",
+                        "status": STATUS_TRADING_SOON,
+                        "trading_start_time": "2026-05-30T16:00:00Z",
+                        "source_type": "exchange_announcement",
+                        "confidence": "high",
+                        "source_precedence": SOURCE_PRECEDENCE_ANNOUNCEMENT,
+                    },
+                )
+                same_event_id = db.upsert_listing_event(
+                    conn,
+                    {
+                        "exchange": "coinbase",
+                        "normalized_asset_id": asset_id,
+                        "project_name": "ABC Network",
+                        "token_symbol": "ABC",
+                        "listing_type": LISTING_TYPE_SPOT,
+                        "event_family": EVENT_FAMILY_SPOT_LISTING,
+                        "event_kind": "roadmap",
+                        "status": STATUS_TRADING_SOON,
+                        "trading_start_time": "2026-05-30T18:00:00Z",
+                        "source_type": "official_x",
+                        "confidence": "medium",
+                        "source_precedence": SOURCE_PRECEDENCE_X,
+                    },
+                )
+                row = conn.execute(
+                    """
+                    SELECT trading_start_time, event_kind, source_type, source_precedence
+                    FROM listing_events
+                    WHERE id = ?
+                    """,
+                    (event_id,),
+                ).fetchone()
+
+        self.assertEqual(event_id, same_event_id)
+        self.assertEqual(
+            (
+                "2026-05-30T16:00:00Z",
+                "listing_announcement",
+                "exchange_announcement",
+                SOURCE_PRECEDENCE_ANNOUNCEMENT,
+            ),
+            row,
+        )
+
     def test_start_sync_run_creates_running_row_when_no_fresh_run_exists(self):
         now = datetime(2026, 5, 29, 12, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -448,6 +651,67 @@ class ExchangeListingDbTests(unittest.TestCase):
 
         self.assertEqual("running", result["status"])
         self.assertEqual(('manual', 'running', '["coinbase","kraken"]'), row)
+
+    def test_start_sync_run_creates_single_active_lock_for_running_sync(self):
+        now = datetime(2026, 5, 29, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.open_initialized_db(tmpdir) as conn:
+                running = db.start_sync_run(conn, trigger_type="manual", exchanges=("coinbase",), now=now)
+                skipped = db.start_sync_run(
+                    conn,
+                    trigger_type="manual",
+                    exchanges=("kraken",),
+                    now=now + timedelta(minutes=10),
+                )
+                locks = conn.execute("SELECT lock_name, run_id FROM sync_locks").fetchall()
+                running_count = conn.execute(
+                    "SELECT COUNT(*) FROM sync_runs WHERE status = 'running'"
+                ).fetchone()[0]
+
+        self.assertEqual("running", running["status"])
+        self.assertEqual(
+            {
+                "status": "skipped",
+                "run_id": running["run_id"],
+                "skipped_reason": "fresh_running_sync",
+            },
+            skipped,
+        )
+        self.assertEqual([("exchange_listing_sync", running["run_id"])], locks)
+        self.assertEqual(1, running_count)
+
+    def test_start_sync_run_allows_only_one_running_sync_across_connections(self):
+        now = datetime(2026, 5, 29, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "exchange_listings.sqlite"
+            init_db(db_path)
+            with db.connect(db_path) as first_conn, db.connect(db_path) as second_conn:
+                running = db.start_sync_run(
+                    first_conn,
+                    trigger_type="manual",
+                    exchanges=("coinbase",),
+                    now=now,
+                )
+                skipped = db.start_sync_run(
+                    second_conn,
+                    trigger_type="manual",
+                    exchanges=("kraken",),
+                    now=now + timedelta(minutes=1),
+                )
+                running_count = second_conn.execute(
+                    "SELECT COUNT(*) FROM sync_runs WHERE status = 'running'"
+                ).fetchone()[0]
+
+        self.assertEqual("running", running["status"])
+        self.assertEqual(
+            {
+                "status": "skipped",
+                "run_id": running["run_id"],
+                "skipped_reason": "fresh_running_sync",
+            },
+            skipped,
+        )
+        self.assertEqual(1, running_count)
 
     def test_start_sync_run_returns_skipped_when_running_row_is_fresh(self):
         now = datetime(2026, 5, 29, 12, 0, tzinfo=timezone.utc)
@@ -502,3 +766,82 @@ class ExchangeListingDbTests(unittest.TestCase):
         self.assertEqual("stale running sync exceeded 2 hours", stale_row[1])
         self.assertEqual("running", fresh_row[0])
         self.assertNotEqual(stale["run_id"], fresh["run_id"])
+
+    def test_start_sync_run_replaces_stale_lock_with_fresh_running_sync(self):
+        now = datetime(2026, 5, 29, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.open_initialized_db(tmpdir) as conn:
+                stale = db.start_sync_run(
+                    conn,
+                    trigger_type="scheduled",
+                    exchanges=("coinbase",),
+                    now=now - timedelta(hours=3),
+                )
+                fresh = db.start_sync_run(
+                    conn,
+                    trigger_type="scheduled",
+                    exchanges=("kraken",),
+                    now=now,
+                )
+                locks = conn.execute("SELECT lock_name, run_id FROM sync_locks").fetchall()
+
+        self.assertEqual([("exchange_listing_sync", fresh["run_id"])], locks)
+        self.assertNotEqual(stale["run_id"], fresh["run_id"])
+
+    def test_finish_sync_run_updates_counts_and_releases_active_lock(self):
+        now = datetime(2026, 5, 29, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.open_initialized_db(tmpdir) as conn:
+                run = db.start_sync_run(conn, trigger_type="manual", exchanges=("coinbase",), now=now)
+                db.finish_sync_run(
+                    conn,
+                    run["run_id"],
+                    "success",
+                    raw_sources_found=3,
+                    events_created=1,
+                    events_updated=2,
+                    now=now + timedelta(minutes=5),
+                )
+                row = conn.execute(
+                    """
+                    SELECT status, raw_sources_found, events_created, events_updated, finished_at
+                    FROM sync_runs
+                    WHERE id = ?
+                    """,
+                    (run["run_id"],),
+                ).fetchone()
+                lock_count = conn.execute("SELECT COUNT(*) FROM sync_locks").fetchone()[0]
+
+        self.assertEqual(("success", 3, 1, 2, "2026-05-29T12:05:00Z"), row)
+        self.assertEqual(0, lock_count)
+
+    def test_record_exchange_result_persists_exchange_metrics(self):
+        now = datetime(2026, 5, 29, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.open_initialized_db(tmpdir) as conn:
+                run = db.start_sync_run(conn, trigger_type="manual", exchanges=("coinbase",), now=now)
+                result_id = db.record_exchange_result(
+                    conn,
+                    run["run_id"],
+                    exchange="coinbase",
+                    source_type="official_x",
+                    status="success",
+                    sources_found=5,
+                    events_created=2,
+                    events_updated=1,
+                    pages_fetched=3,
+                )
+                row = conn.execute(
+                    """
+                    SELECT sync_run_id, exchange, source_type, status,
+                           sources_found, events_created, events_updated, pages_fetched, error
+                    FROM sync_run_exchange_results
+                    WHERE id = ?
+                    """,
+                    (result_id,),
+                ).fetchone()
+
+        self.assertEqual(
+            (run["run_id"], "coinbase", "official_x", "success", 5, 2, 1, 3, None),
+            row,
+        )
