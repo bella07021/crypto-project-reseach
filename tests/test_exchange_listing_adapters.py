@@ -11,6 +11,7 @@ from exchange_listings.adapters import (
     parse_mexc_sources,
     parse_okx_sources,
 )
+from exchange_listings.parsers import parse_events
 
 
 class ExchangeListingAdapterTests(unittest.TestCase):
@@ -127,7 +128,15 @@ class ExchangeListingAdapterTests(unittest.TestCase):
         self.assertEqual(1, len(sources))
         self.assertEqual("AF", sources[0]["external_id"])
         self.assertEqual("AmericanFortress", sources[0]["project_name"])
-        self.assertIn("Kraken will list AmericanFortress (AF)", sources[0]["raw_text"])
+        self.assertIn("Kraken will list token (AF)", sources[0]["raw_text"])
+
+    def test_kraken_uppercase_project_name_does_not_create_extra_symbol(self):
+        html = '<h2><span>SODAX</span></h2><h3><span>SODA</span></h3>'
+
+        sources = parse_kraken_sources(html, limit=5)
+        events = parse_events(sources[0])
+
+        self.assertEqual(["SODA"], [event["token_symbol"] for event in events])
 
     def test_live_fetcher_raises_for_unimplemented_sources(self):
         with self.assertRaises(SourceUnavailable):

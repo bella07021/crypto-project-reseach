@@ -182,7 +182,7 @@ def parse_kraken_sources(page_html: str, *, limit: int) -> list[dict]:
         if symbol in seen:
             continue
         seen.add(symbol)
-        raw_text = f"Kraken will list {project_name} ({symbol}) for spot trading."
+        raw_text = f"Kraken will list token ({symbol}) for spot trading. Project: {project_name}."
         sources.append(
             _source(
                 "kraken",
