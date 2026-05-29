@@ -15,7 +15,9 @@ from exchange_listings.models import (
     STATUS_ANNOUNCED,
     STATUS_TBD,
     STATUS_TRADING_SOON,
+    STATUS_UNKNOWN,
 )
+from exchange_listings.parsers import parse_events
 
 
 class ExchangeListingDbTests(unittest.TestCase):
@@ -448,6 +450,112 @@ class ExchangeListingDbTests(unittest.TestCase):
             ),
             row,
         )
+
+    def test_parsed_coinbase_roadmap_removal_updates_existing_tbd_event_to_unknown(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.open_initialized_db(tmpdir) as conn:
+                roadmap_source = {
+                    "exchange": "coinbase",
+                    "source_type": "official_x",
+                    "external_id": "roadmap-123",
+                    "title": "EXT added to roadmap",
+                    "raw_text": "Example Token (EXT) has been added to our listing roadmap.",
+                    "fetched_at": "2026-05-29T00:00:00Z",
+                }
+                removal_source = {
+                    "exchange": "coinbase",
+                    "source_type": "official_x",
+                    "external_id": "roadmap-124",
+                    "title": "Roadmap update",
+                    "raw_text": "We have removed Example Token (EXT) from our listing roadmap.",
+                    "fetched_at": "2026-05-29T01:00:00Z",
+                }
+                asset_id = db.upsert_normalized_asset(
+                    conn,
+                    {"token_symbol": "EXT", "project_name": "Example Token"},
+                )
+
+                roadmap_raw_id = db.upsert_raw_source(conn, roadmap_source)
+                roadmap_event = parse_events(roadmap_source)[0]
+                first_event_id = db.upsert_listing_event(
+                    conn,
+                    {
+                        **roadmap_event,
+                        "normalized_asset_id": asset_id,
+                        "raw_source_id": roadmap_raw_id,
+                    },
+                )
+                removal_raw_id = db.upsert_raw_source(conn, removal_source)
+                removal_event = parse_events(removal_source)[0]
+                second_event_id = db.upsert_listing_event(
+                    conn,
+                    {
+                        **removal_event,
+                        "normalized_asset_id": asset_id,
+                        "raw_source_id": removal_raw_id,
+                    },
+                )
+                row = conn.execute(
+                    """
+                    SELECT status, source_precedence, raw_source_id
+                    FROM listing_events
+                    WHERE id = ?
+                    """,
+                    (first_event_id,),
+                ).fetchone()
+                event_count = conn.execute("SELECT COUNT(*) FROM listing_events").fetchone()[0]
+
+        self.assertEqual(first_event_id, second_event_id)
+        self.assertEqual(1, event_count)
+        self.assertEqual((STATUS_UNKNOWN, SOURCE_PRECEDENCE_X, removal_raw_id), row)
+
+    def test_unknown_status_does_not_downgrade_confirmed_listing_status(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.open_initialized_db(tmpdir) as conn:
+                asset_id = db.upsert_normalized_asset(
+                    conn,
+                    {"token_symbol": "EXT", "project_name": "Example Token"},
+                )
+                event_id = db.upsert_listing_event(
+                    conn,
+                    {
+                        "exchange": "coinbase",
+                        "normalized_asset_id": asset_id,
+                        "project_name": "Example Token",
+                        "token_symbol": "EXT",
+                        "listing_type": LISTING_TYPE_SPOT,
+                        "event_family": EVENT_FAMILY_SPOT_LISTING,
+                        "event_kind": "listing_announcement",
+                        "status": STATUS_TRADING_SOON,
+                        "trading_start_time": "2026-05-30T16:00:00Z",
+                        "source_type": "official_x",
+                        "confidence": "medium",
+                        "source_precedence": SOURCE_PRECEDENCE_X,
+                    },
+                )
+                same_event_id = db.upsert_listing_event(
+                    conn,
+                    {
+                        "exchange": "coinbase",
+                        "normalized_asset_id": asset_id,
+                        "project_name": "Example Token",
+                        "token_symbol": "EXT",
+                        "listing_type": LISTING_TYPE_SPOT,
+                        "event_family": EVENT_FAMILY_SPOT_LISTING,
+                        "event_kind": "roadmap",
+                        "status": STATUS_UNKNOWN,
+                        "source_type": "official_x",
+                        "confidence": "medium",
+                        "source_precedence": SOURCE_PRECEDENCE_X,
+                    },
+                )
+                row = conn.execute(
+                    "SELECT status, trading_start_time FROM listing_events WHERE id = ?",
+                    (event_id,),
+                ).fetchone()
+
+        self.assertEqual(event_id, same_event_id)
+        self.assertEqual((STATUS_TRADING_SOON, "2026-05-30T16:00:00Z"), row)
 
     def test_upsert_listing_event_advances_status_by_rank_without_higher_precedence(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -5,7 +5,13 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from exchange_listings.models import STATUS_ANNOUNCED, STATUS_TBD, STATUS_TRADING_SOON, STATUS_TRADING_STARTED
+from exchange_listings.models import (
+    STATUS_ANNOUNCED,
+    STATUS_TBD,
+    STATUS_TRADING_SOON,
+    STATUS_TRADING_STARTED,
+    STATUS_UNKNOWN,
+)
 
 
 SCHEMA_SQL = """
@@ -463,6 +469,16 @@ def _status_rank(status: str | None) -> int:
     }.get(status, 0)
 
 
+def _is_same_precedence_roadmap_removal(values: dict, existing_values: dict) -> bool:
+    return (
+        values["source_precedence"] == existing_values["source_precedence"]
+        and existing_values["status"] == STATUS_TBD
+        and values["status"] == STATUS_UNKNOWN
+        and values.get("source_type") == "official_x"
+        and values.get("event_kind") == "roadmap"
+    )
+
+
 def _copy_non_empty_incoming(merged: dict, values: dict, columns: tuple[str, ...]) -> None:
     for column in columns:
         if column in ("created_at", "updated_at"):
@@ -540,10 +556,11 @@ def upsert_listing_event(conn, event: dict) -> int:
         for field in ("trading_start_time", "deposit_start_time", "withdrawal_start_time")
     )
     advances_status = _status_rank(values["status"]) > _status_rank(existing_values["status"])
+    applies_roadmap_removal = _is_same_precedence_roadmap_removal(values, existing_values)
 
-    if higher_precedence or fills_timing or corrects_timing or advances_status:
+    if higher_precedence or fills_timing or corrects_timing or advances_status or applies_roadmap_removal:
         merged = existing_values.copy()
-        if higher_precedence:
+        if higher_precedence or applies_roadmap_removal:
             _copy_non_empty_incoming(merged, values, columns)
         else:
             if advances_status:
