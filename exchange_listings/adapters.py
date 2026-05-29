@@ -29,7 +29,7 @@ def fetch_live_sources(
     limit=5,
     fetch_text=None,
     now: datetime | None = None,
-    max_pages=12,
+    max_pages=3,
 ) -> list[dict]:
     del mode
     fetch = fetch_text or _fetch_text

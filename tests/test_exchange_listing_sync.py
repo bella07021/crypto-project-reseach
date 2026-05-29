@@ -291,11 +291,11 @@ class ExchangeListingSyncTests(unittest.TestCase):
         self.assertEqual("failed", summary["status"])
         self.assertEqual("Unknown exchange: notarealexchange", summary["error"])
 
-    def test_cli_live_mode_uses_live_fetcher_with_limit(self):
+    def test_cli_live_mode_uses_live_fetcher_with_limit_and_max_pages(self):
         calls = []
 
-        def fake_live_fetcher(exchange, *, mode, months, limit):
-            calls.append((exchange, mode, months, limit))
+        def fake_live_fetcher(exchange, *, mode, months, limit, max_pages):
+            calls.append((exchange, mode, months, limit, max_pages))
             return []
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -316,10 +316,12 @@ class ExchangeListingSyncTests(unittest.TestCase):
                             "--live",
                             "--limit",
                             "2",
+                            "--max-pages",
+                            "1",
                         ]
                     )
 
         summary = json.loads(stdout.getvalue())
         self.assertEqual(0, exit_code)
         self.assertTrue(summary["ok"])
-        self.assertEqual([("okx", "incremental", 3, 2)], calls)
+        self.assertEqual([("okx", "incremental", 3, 2, 1)], calls)

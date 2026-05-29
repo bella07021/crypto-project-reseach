@@ -17,6 +17,8 @@
     <string>--live</string>
     <string>--limit</string>
     <string>30</string>
+    <string>--max-pages</string>
+    <string>3</string>
   </array>
 
   <key>RunAtLoad</key>

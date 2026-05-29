@@ -136,11 +136,41 @@ class ExchangeListingAdapterTests(unittest.TestCase):
             limit=10,
             fetch_text=fake_fetch,
             now=datetime(2026, 5, 29, tzinfo=timezone.utc),
+            max_pages=7,
         )
 
         self.assertIn("https://www.kucoin.com/announcement/new-listings/page/6", calls)
         self.assertNotIn("https://www.kucoin.com/announcement/new-listings/page/8", calls)
         self.assertIn("World Premiere: Based (BASED) Listed on KuCoin", [source["title"] for source in sources])
+
+    def test_live_fetcher_defaults_to_first_three_pages_for_daily_sync(self):
+        calls = []
+
+        def fake_fetch(url):
+            calls.append(url)
+            return """
+            <a href="/announcement/en-recent-recent-listed-on-kucoin">
+              <h3>Recent Token (RECENT) Listed on KuCoin</h3>
+              <p><bdi>05/20/2026, 00:00:00</bdi></p>
+            </a>
+            """
+
+        fetch_live_sources(
+            "kucoin",
+            months=3,
+            limit=100,
+            fetch_text=fake_fetch,
+            now=datetime(2026, 5, 29, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(
+            [
+                "https://www.kucoin.com/announcement/new-listings",
+                "https://www.kucoin.com/announcement/new-listings/page/2",
+                "https://www.kucoin.com/announcement/new-listings/page/3",
+            ],
+            calls,
+        )
 
     def test_mexc_sources_extract_article_titles_and_datetimes(self):
         html = """

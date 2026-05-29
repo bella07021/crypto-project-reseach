@@ -908,9 +908,10 @@ def request_status_payload(
 
 def run_exchange_listing_manual_sync(data: dict[str, Any]) -> dict[str, Any]:
     limit = int(data.get("limit") or 30)
+    max_pages = int(data.get("max_pages") or 3)
 
     def fetcher(exchange, *, mode, months):
-        return fetch_live_sources(exchange, mode=mode, months=months, limit=limit)
+        return fetch_live_sources(exchange, mode=mode, months=months, limit=limit, max_pages=max_pages)
 
     return run_sync(
         ROOT / "data" / "exchange_listings.sqlite",

@@ -65,7 +65,7 @@ python3 exchange_listing_sync.py --mode backfill --months 3 --live --limit 30
 python3 exchange_listing_sync.py --mode incremental --live --limit 30
 ```
 
-Use `--limit` to cap the maximum live source candidates per exchange during pilot runs, for example `--limit 3`.
+Use `--limit` to cap the maximum live source candidates per exchange during pilot runs, for example `--limit 3`. The live sync checks the first 3 announcement pages by default; pass `--max-pages N` only when you intentionally want a deeper manual run.
 
 Install the daily incremental sync as a macOS LaunchAgent:
 

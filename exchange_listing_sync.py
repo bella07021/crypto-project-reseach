@@ -41,13 +41,19 @@ def build_parser() -> argparse.ArgumentParser:
         default=5,
         help="Maximum live source candidates to fetch per exchange.",
     )
+    parser.add_argument(
+        "--max-pages",
+        type=int,
+        default=3,
+        help="Maximum live announcement list pages to fetch per exchange.",
+    )
     return parser
 
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     trigger_type = "backfill" if args.mode == "backfill" else "scheduled"
-    fetcher = _live_fetcher(args.limit) if args.live else default_fetcher
+    fetcher = _live_fetcher(args.limit, args.max_pages) if args.live else default_fetcher
     try:
         summary = run_sync(
             args.db,
@@ -67,9 +73,9 @@ def main(argv=None) -> int:
     return 0 if summary.get("ok") or summary.get("status") == "skipped" else 1
 
 
-def _live_fetcher(limit: int):
+def _live_fetcher(limit: int, max_pages: int):
     def fetch(exchange, *, mode, months):
-        return fetch_live_sources(exchange, mode=mode, months=months, limit=limit)
+        return fetch_live_sources(exchange, mode=mode, months=months, limit=limit, max_pages=max_pages)
 
     return fetch
 
