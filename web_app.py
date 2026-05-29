@@ -26,6 +26,7 @@ from score_project import (
     load_benchmarks,
     write_workbook,
 )
+from exchange_listings.sync import run_manual_sync
 from live_project_fetcher import clean_html_text, fetch_text, normalize_rootdata_url, parse_human_date
 
 
@@ -904,6 +905,23 @@ def request_status_payload(
     return {"ok": True, "request": request, "assessment": assessment}
 
 
+def run_exchange_listing_manual_sync(data: dict[str, Any]) -> dict[str, Any]:
+    return run_manual_sync(
+        ROOT / "data" / "exchange_listings.sqlite",
+        exchanges=data.get("exchanges"),
+    )
+
+
+def handle_post_api(path: str, data: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    if path == "/api/request":
+        return 200, create_project_request(data)
+    if path == "/api/score":
+        return 200, score_payload(data)
+    if path == "/api/exchange-listings/sync":
+        return 200, run_exchange_listing_manual_sync(data)
+    return 404, {"ok": False, "error": "not found"}
+
+
 class CryptoScoringHandler(BaseHTTPRequestHandler):
     server_version = "CryptoScoringWeb/0.1"
 
@@ -930,15 +948,15 @@ class CryptoScoringHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path not in {"/api/score", "/api/request"}:
+        if parsed.path not in {"/api/score", "/api/request", "/api/exchange-listings/sync"}:
             self.send_error(404)
             return
         try:
             length = int(self.headers.get("content-length", "0"))
             raw = self.rfile.read(length).decode("utf-8")
             data = json.loads(raw or "{}")
-            result = create_project_request(data) if parsed.path == "/api/request" else score_payload(data)
-            self.send_json(result)
+            status, result = handle_post_api(parsed.path, data)
+            self.send_json(result, status=status)
         except Exception as exc:
             self.send_json({"ok": False, "error": str(exc)}, status=400)
 

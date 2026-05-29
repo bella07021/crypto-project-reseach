@@ -18,10 +18,62 @@ from web_app import (
     project_exchange_progress,
     parse_score_payload,
     score_payload,
+    handle_post_api,
 )
 
 
 class WebAppTests(unittest.TestCase):
+    def test_exchange_listing_sync_endpoint_delegates(self):
+        sync_body = {"exchanges": ["coinbase", "kraken"]}
+        score_body = {
+            "x_handle": "DemoX",
+            "rootdata_url": "https://rootdata.example/demo",
+        }
+
+        with patch(
+            "web_app.run_exchange_listing_manual_sync",
+            return_value={"ok": True, "status": "success"},
+            create=True,
+        ) as sync_mock, patch(
+            "web_app.score_payload",
+            return_value={"ok": True, "assessment": {"x_handle": "DemoX"}},
+        ) as score_mock:
+            sync_status, sync_payload = handle_post_api("/api/exchange-listings/sync", sync_body)
+            score_status, score_response = handle_post_api("/api/score", score_body)
+
+        self.assertEqual(sync_status, 200)
+        self.assertTrue(sync_payload["ok"])
+        sync_mock.assert_called_once_with(sync_body)
+        self.assertEqual(score_status, 200)
+        self.assertTrue(score_response["ok"])
+        score_mock.assert_called_once_with(score_body)
+
+    def test_score_endpoint_delegates_to_score_payload(self):
+        body = {
+            "x_handle": "DemoX",
+            "rootdata_url": "https://rootdata.example/demo",
+        }
+
+        with patch("web_app.score_payload", return_value={"ok": True, "assessment": {"x_handle": "DemoX"}}) as mock:
+            status, payload = handle_post_api("/api/score", body)
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["ok"])
+        mock.assert_called_once_with(body)
+
+    def test_request_endpoint_delegates_to_create_project_request(self):
+        body = {
+            "x_handle": "DemoX",
+            "rootdata_url": "https://rootdata.example/demo",
+        }
+
+        with patch("web_app.create_project_request", return_value={"ok": True, "created": True}) as mock:
+            status, payload = handle_post_api("/api/request", body)
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["ok"])
+        mock.assert_called_once_with(body)
+
     def test_parse_score_payload_normalizes_form_inputs(self):
         payload = parse_score_payload(
             {
