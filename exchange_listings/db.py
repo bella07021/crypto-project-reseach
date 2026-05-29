@@ -412,8 +412,12 @@ def _status_rank(status: str | None) -> int:
     }.get(status, 0)
 
 
-def _merge(existing, incoming):
-    return incoming if incoming is not None else existing
+def _copy_non_empty_incoming(merged: dict, values: dict, columns: tuple[str, ...]) -> None:
+    for column in columns:
+        if column in ("created_at", "updated_at"):
+            continue
+        if values[column] is not None:
+            merged[column] = values[column]
 
 
 def upsert_listing_event(conn, event: dict) -> int:
@@ -479,26 +483,18 @@ def upsert_listing_event(conn, event: dict) -> int:
         for field in ("trading_start_time", "deposit_start_time", "withdrawal_start_time")
     )
     higher_precedence = values["source_precedence"] > existing_values["source_precedence"]
-    advances_status = (
-        existing_values["status"] == STATUS_TBD
-        and _status_rank(values["status"]) > _status_rank(existing_values["status"])
-    )
+    advances_status = _status_rank(values["status"]) > _status_rank(existing_values["status"])
 
     if higher_precedence or fills_timing or advances_status:
-        merged = {
-            column: _merge(existing_values[column], values[column])
-            for column in columns
-            if column not in ("created_at",)
-        }
+        merged = existing_values.copy()
         if higher_precedence:
-            merged.update({column: values[column] for column in columns if column != "created_at"})
+            _copy_non_empty_incoming(merged, values, columns)
         else:
-            merged["source_precedence"] = max(
-                existing_values["source_precedence"],
-                values["source_precedence"],
-            )
             if advances_status:
                 merged["status"] = values["status"]
+            for field in ("trading_start_time", "deposit_start_time", "withdrawal_start_time"):
+                if existing_values[field] is None and values[field] is not None:
+                    merged[field] = values[field]
         merged["created_at"] = existing_values["created_at"]
         merged["updated_at"] = now
         conn.execute(

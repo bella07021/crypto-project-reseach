@@ -10,7 +10,9 @@ from exchange_listings.models import (
     EVENT_FAMILY_SPOT_LISTING,
     LISTING_TYPE_SPOT,
     SOURCE_PRECEDENCE_ANNOUNCEMENT,
+    SOURCE_PRECEDENCE_BLOG,
     SOURCE_PRECEDENCE_X,
+    STATUS_ANNOUNCED,
     STATUS_TBD,
     STATUS_TRADING_SOON,
 )
@@ -279,6 +281,147 @@ class ExchangeListingDbTests(unittest.TestCase):
                 STATUS_TRADING_SOON,
                 SOURCE_PRECEDENCE_ANNOUNCEMENT,
                 "2026-05-30T16:00:00Z",
+                announcement_source_id,
+            ),
+            row,
+        )
+
+    def test_upsert_listing_event_advances_status_by_rank_without_higher_precedence(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.open_initialized_db(tmpdir) as conn:
+                asset_id = db.upsert_normalized_asset(
+                    conn,
+                    {"token_symbol": "ABC", "project_name": "ABC Network"},
+                )
+                event_id = db.upsert_listing_event(
+                    conn,
+                    {
+                        "exchange": "coinbase",
+                        "normalized_asset_id": asset_id,
+                        "project_name": "ABC Network",
+                        "token_symbol": "ABC",
+                        "listing_type": LISTING_TYPE_SPOT,
+                        "event_family": EVENT_FAMILY_SPOT_LISTING,
+                        "event_kind": "listing_announcement",
+                        "status": STATUS_ANNOUNCED,
+                        "source_type": "official_blog",
+                        "confidence": "medium",
+                        "source_precedence": SOURCE_PRECEDENCE_BLOG,
+                    },
+                )
+                same_event_id = db.upsert_listing_event(
+                    conn,
+                    {
+                        "exchange": "coinbase",
+                        "normalized_asset_id": asset_id,
+                        "project_name": "ABC Network",
+                        "token_symbol": "ABC",
+                        "listing_type": LISTING_TYPE_SPOT,
+                        "event_family": EVENT_FAMILY_SPOT_LISTING,
+                        "event_kind": "listing_announcement",
+                        "status": STATUS_TRADING_SOON,
+                        "source_type": "official_blog",
+                        "confidence": "medium",
+                        "source_precedence": SOURCE_PRECEDENCE_BLOG,
+                    },
+                )
+                row = conn.execute(
+                    "SELECT status, source_precedence FROM listing_events WHERE id = ?",
+                    (event_id,),
+                ).fetchone()
+
+        self.assertEqual(event_id, same_event_id)
+        self.assertEqual((STATUS_TRADING_SOON, SOURCE_PRECEDENCE_BLOG), row)
+
+    def test_upsert_listing_event_fills_timing_without_downgrading_metadata(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.open_initialized_db(tmpdir) as conn:
+                asset_id = db.upsert_normalized_asset(
+                    conn,
+                    {"token_symbol": "ABC", "project_name": "ABC Network"},
+                )
+                announcement_source_id = db.upsert_raw_source(
+                    conn,
+                    {
+                        "exchange": "coinbase",
+                        "source_type": "exchange_announcement",
+                        "source_url": "https://www.coinbase.com/blog/coinbase-will-list-abc",
+                        "title": "Coinbase will list ABC Network",
+                        "raw_text": "Trading will begin soon.",
+                        "fetched_at": "2026-05-29T00:00:00Z",
+                    },
+                )
+                lower_precedence_source_id = db.upsert_raw_source(
+                    conn,
+                    {
+                        "exchange": "coinbase",
+                        "source_type": "official_x",
+                        "external_id": "123",
+                        "title": "ABC deposit timing",
+                        "raw_text": "Deposits are now open for ABC.",
+                        "fetched_at": "2026-05-29T01:00:00Z",
+                    },
+                )
+                event_id = db.upsert_listing_event(
+                    conn,
+                    {
+                        "exchange": "coinbase",
+                        "normalized_asset_id": asset_id,
+                        "project_name": "ABC Network",
+                        "token_symbol": "ABC",
+                        "listing_type": LISTING_TYPE_SPOT,
+                        "event_family": EVENT_FAMILY_SPOT_LISTING,
+                        "event_kind": "listing_announcement",
+                        "status": STATUS_TRADING_SOON,
+                        "announcement_url": "https://www.coinbase.com/blog/coinbase-will-list-abc",
+                        "announcement_title": "Coinbase will list ABC Network",
+                        "source_type": "exchange_announcement",
+                        "confidence": "high",
+                        "source_precedence": SOURCE_PRECEDENCE_ANNOUNCEMENT,
+                        "raw_source_id": announcement_source_id,
+                    },
+                )
+                same_event_id = db.upsert_listing_event(
+                    conn,
+                    {
+                        "exchange": "coinbase",
+                        "normalized_asset_id": asset_id,
+                        "project_name": "ABC Network",
+                        "token_symbol": "ABC",
+                        "listing_type": LISTING_TYPE_SPOT,
+                        "event_family": EVENT_FAMILY_SPOT_LISTING,
+                        "event_kind": "roadmap",
+                        "status": STATUS_TBD,
+                        "announcement_title": "ABC deposit timing",
+                        "deposit_start_time": "2026-05-29T01:00:00Z",
+                        "source_type": "official_x",
+                        "confidence": "low",
+                        "source_precedence": SOURCE_PRECEDENCE_X,
+                        "raw_source_id": lower_precedence_source_id,
+                    },
+                )
+                row = conn.execute(
+                    """
+                    SELECT event_kind, status, announcement_url, announcement_title,
+                           deposit_start_time, source_type, confidence, source_precedence,
+                           raw_source_id
+                    FROM listing_events
+                    WHERE id = ?
+                    """,
+                    (event_id,),
+                ).fetchone()
+
+        self.assertEqual(event_id, same_event_id)
+        self.assertEqual(
+            (
+                "listing_announcement",
+                STATUS_TRADING_SOON,
+                "https://www.coinbase.com/blog/coinbase-will-list-abc",
+                "Coinbase will list ABC Network",
+                "2026-05-29T01:00:00Z",
+                "exchange_announcement",
+                "high",
+                SOURCE_PRECEDENCE_ANNOUNCEMENT,
                 announcement_source_id,
             ),
             row,
