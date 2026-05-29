@@ -164,6 +164,21 @@ class ExchangeListingParserTests(unittest.TestCase):
         self.assertEqual(["ALP", "BET"], [event["token_symbol"] for event in events])
         self.assertEqual([STATUS_ANNOUNCED, STATUS_ANNOUNCED], [event["status"] for event in events])
 
+    def test_multi_token_pairs_are_attributed_to_matching_symbol(self):
+        raw_source = {
+            "exchange": "binance",
+            "source_type": "exchange_announcement",
+            "source_url": "https://www.binance.com/en/support/announcement/601",
+            "title": "Binance Will List Alpha Token (ALP) and Beta Token (BET)",
+            "raw_text": "Trading pairs: ALP/USDT, BET/USDT. Binance will list Alpha Token (ALP) and Beta Token (BET).",
+            "published_at": "2026-05-29T00:00:00Z",
+        }
+
+        events = parse_events(raw_source, now=self.fixed_now)
+
+        self.assertEqual(["ALP/USDT"], events[0]["pairs"])
+        self.assertEqual(["BET/USDT"], events[1]["pairs"])
+
     def test_korean_notice_extracts_parenthesized_symbol_and_preserves_project_name(self):
         raw_source = {
             "exchange": "upbit",

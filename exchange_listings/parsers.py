@@ -56,7 +56,7 @@ def parse_events(raw_source: dict, now: datetime | None = None) -> list[dict]:
             trading_start_time=trading_start,
             deposit_start_time=deposit_start,
             withdrawal_start_time=withdrawal_start,
-            pairs=pairs,
+            pairs=_pairs_for_symbol(pairs, symbol),
         )
         for symbol in _extract_symbols(text)
     ]
@@ -203,6 +203,13 @@ def _extract_pairs(text: str) -> list[str] | None:
     pairs = [f"{match.group(1).upper()}/{match.group(2).upper()}" for match in _PAIR_RE.finditer(text)]
     unique_pairs = list(dict.fromkeys(pairs))
     return unique_pairs or None
+
+
+def _pairs_for_symbol(pairs: list[str] | None, symbol: str) -> list[str] | None:
+    if not pairs:
+        return None
+    matching_pairs = [pair for pair in pairs if pair.split("/", 1)[0] == symbol]
+    return matching_pairs or None
 
 
 def _source_precedence(raw_source: dict) -> int:
