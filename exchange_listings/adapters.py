@@ -29,26 +29,26 @@ def fetch_live_sources(
     limit=5,
     fetch_text=None,
     now: datetime | None = None,
-    max_pages=5,
+    max_pages=12,
 ) -> list[dict]:
     del mode
     fetch = fetch_text or _fetch_text
     exchange = exchange.lower()
     cutoff = _lookback_cutoff(months, now)
     if exchange == "binance":
-        sources = _fetch_paginated(fetch, _binance_url, parse_binance_sources, limit=limit, max_pages=max_pages)
+        sources = _fetch_paginated(fetch, _binance_url, parse_binance_sources, limit=limit, max_pages=max_pages, cutoff=cutoff)
         return _filter_recent_sources(sources, cutoff, limit)
     if exchange == "okx":
-        sources = _fetch_paginated(fetch, _okx_url, parse_okx_sources, limit=limit, max_pages=max_pages)
+        sources = _fetch_paginated(fetch, _okx_url, parse_okx_sources, limit=limit, max_pages=max_pages, cutoff=cutoff)
         return _filter_recent_sources(sources, cutoff, limit)
     if exchange == "bybit":
-        sources = _fetch_paginated(fetch, _bybit_url, parse_bybit_sources, limit=limit, max_pages=max_pages)
+        sources = _fetch_paginated(fetch, _bybit_url, parse_bybit_sources, limit=limit, max_pages=max_pages, cutoff=cutoff)
         return _filter_recent_sources(sources, cutoff, limit)
     if exchange == "kucoin":
-        sources = _fetch_paginated(fetch, _kucoin_url, parse_kucoin_sources, limit=limit, max_pages=max_pages)
+        sources = _fetch_paginated(fetch, _kucoin_url, parse_kucoin_sources, limit=limit, max_pages=max_pages, cutoff=cutoff)
         return _filter_recent_sources(sources, cutoff, limit)
     if exchange == "mexc":
-        sources = _fetch_paginated(fetch, _mexc_url, parse_mexc_sources, limit=limit, max_pages=max_pages)
+        sources = _fetch_paginated(fetch, _mexc_url, parse_mexc_sources, limit=limit, max_pages=max_pages, cutoff=cutoff)
         return _filter_recent_sources(sources, cutoff, limit)
     if exchange == "kraken":
         return parse_kraken_sources(fetch(KRAKEN_LIST_URL), limit=limit)
@@ -141,6 +141,9 @@ def parse_kucoin_sources(page_html: str, *, limit: int) -> list[dict]:
 
 def parse_mexc_sources(page_html: str, *, limit: int) -> list[dict]:
     unescaped = html.unescape(page_html)
+    sources = _parse_mexc_next_section_articles(unescaped, limit=limit)
+    if sources:
+        return sources
     pattern = re.compile(
         r'<a[^>]+title="(?P<title>[^"]+)"[^>]+href="(?P<href>/announcements/article/[^"]+)"'
         r".{0,1200}?"
@@ -249,11 +252,13 @@ def _fetch_text(url: str) -> str:
     return result.stdout
 
 
-def _fetch_paginated(fetch, url_for_page, parser, *, limit: int, max_pages: int) -> list[dict]:
+def _fetch_paginated(fetch, url_for_page, parser, *, limit: int, max_pages: int, cutoff: datetime | None = None) -> list[dict]:
     sources = []
     seen_keys = set()
     for page in range(1, max_pages + 1):
         page_sources = parser(fetch(url_for_page(page)), limit=limit)
+        if page > 1 and _page_is_older_than_cutoff(page_sources, cutoff):
+            break
         for source in page_sources:
             key = source.get("source_url") or source.get("external_id") or source.get("title")
             if key in seen_keys:
@@ -263,6 +268,18 @@ def _fetch_paginated(fetch, url_for_page, parser, *, limit: int, max_pages: int)
             if len(sources) >= limit:
                 return sources
     return sources
+
+
+def _page_is_older_than_cutoff(sources: list[dict], cutoff: datetime | None) -> bool:
+    if not cutoff or not sources:
+        return False
+    published_values = [source.get("published_at") for source in sources if source.get("published_at")]
+    if not published_values:
+        return False
+    return all(
+        datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc) < cutoff
+        for value in published_values
+    )
 
 
 def _binance_url(page: int) -> str:
@@ -291,7 +308,7 @@ def _kucoin_url(page: int) -> str:
 def _mexc_url(page: int) -> str:
     if page == 1:
         return MEXC_LIST_URL
-    return f"{MEXC_LIST_URL}/{page}"
+    return f"{MEXC_LIST_URL}/spot-18?page={page}"
 
 
 def _lookback_cutoff(months: int, now: datetime | None = None) -> datetime:
@@ -514,6 +531,50 @@ def _normalize_iso(value: str | None) -> str | None:
         return None
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     return parsed.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _parse_mexc_next_section_articles(page_html: str, *, limit: int) -> list[dict]:
+    sources = []
+    seen = set()
+    pattern = re.compile(
+        r'\{\\"id\\":(?P<id>\d+),.*?'
+        r'\\"title\\":\\"(?P<title>(?:[^\\"]|\\.)*?)\\".*?'
+        r'\\"displayTime\\":(?P<display_time>\d+).*?'
+        r'\\"labelList\\":(?P<labels>\[.*?\])',
+        re.DOTALL,
+    )
+    for match in pattern.finditer(page_html):
+        article_id = match.group("id")
+        title = _decode_json_string(match.group("title"))
+        labels = match.group("labels").lower()
+        if article_id in seen or '\\"name\\":\\"spot\\"' not in labels:
+            continue
+        if not _looks_like_spot_listing_title(title):
+            continue
+        seen.add(article_id)
+        sources.append(
+            _source(
+                "mexc",
+                f"https://www.mexc.com/announcements/article/first-in-market-{article_id}",
+                title,
+                title,
+                published_at=_iso_from_epoch_ms(match.group("display_time")),
+                external_id=_first_parenthesized_symbol(title) or article_id,
+            )
+        )
+        if len(sources) >= limit:
+            break
+    return sources
+
+
+def _decode_json_string(value: str) -> str:
+    return json.loads(f'"{value}"')
+
+
+def _iso_from_epoch_ms(value) -> str | None:
+    if not value:
+        return None
+    return datetime.fromtimestamp(int(value) / 1000, timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _utc_now() -> str:
