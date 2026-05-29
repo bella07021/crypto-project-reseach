@@ -302,6 +302,54 @@ class ExchangeListingDbTests(unittest.TestCase):
         self.assertEqual(first_id, second_id)
         self.assertEqual(1, row_count)
 
+    def test_upsert_normalized_asset_enriches_symbol_only_asset_without_splitting_events(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.open_initialized_db(tmpdir) as conn:
+                asset_id = db.upsert_normalized_asset(conn, {"token_symbol": "ABC"})
+                first_event_id = db.upsert_listing_event(
+                    conn,
+                    {
+                        "exchange": "coinbase",
+                        "normalized_asset_id": asset_id,
+                        "token_symbol": "ABC",
+                        "listing_type": LISTING_TYPE_SPOT,
+                        "event_family": EVENT_FAMILY_SPOT_LISTING,
+                        "event_kind": "roadmap",
+                        "status": STATUS_TBD,
+                        "source_precedence": SOURCE_PRECEDENCE_X,
+                    },
+                )
+
+                enriched_asset_id = db.upsert_normalized_asset(
+                    conn,
+                    {"token_symbol": "ABC", "project_name": "ABC Network"},
+                )
+                second_event_id = db.upsert_listing_event(
+                    conn,
+                    {
+                        "exchange": "coinbase",
+                        "normalized_asset_id": enriched_asset_id,
+                        "project_name": "ABC Network",
+                        "token_symbol": "ABC",
+                        "listing_type": LISTING_TYPE_SPOT,
+                        "event_family": EVENT_FAMILY_SPOT_LISTING,
+                        "event_kind": "listing_announcement",
+                        "status": STATUS_TRADING_SOON,
+                        "trading_start_time": "2026-05-30T12:00:00Z",
+                        "source_precedence": SOURCE_PRECEDENCE_ANNOUNCEMENT,
+                    },
+                )
+                asset_row = conn.execute(
+                    "SELECT canonical_symbol, project_name, slug FROM normalized_assets WHERE id = ?",
+                    (asset_id,),
+                ).fetchone()
+                event_count = conn.execute("SELECT COUNT(*) FROM listing_events").fetchone()[0]
+
+        self.assertEqual(asset_id, enriched_asset_id)
+        self.assertEqual(first_event_id, second_event_id)
+        self.assertEqual(("ABC", "ABC Network", "abc-network"), asset_row)
+        self.assertEqual(1, event_count)
+
     def test_upsert_listing_event_creates_coinbase_roadmap_event(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             with self.open_initialized_db(tmpdir) as conn:

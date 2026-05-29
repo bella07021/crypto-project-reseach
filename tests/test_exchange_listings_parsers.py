@@ -2,6 +2,7 @@ import unittest
 from datetime import datetime, timezone
 
 from exchange_listings.models import (
+    EXCHANGE_TIMEZONES,
     LISTING_TYPE_SPOT,
     SOURCE_PRECEDENCE_X,
     STATUS_ANNOUNCED,
@@ -52,6 +53,34 @@ class ExchangeListingParserTests(unittest.TestCase):
         self.assertEqual(1, len(events))
         self.assertEqual(STATUS_TRADING_SOON, events[0]["status"])
         self.assertEqual("2026-05-30T12:00:00Z", events[0]["trading_start_time"])
+
+    def test_explicit_pairs_deposit_and_withdrawal_times_are_preserved(self):
+        raw_source = {
+            "exchange": "binance",
+            "source_type": "exchange_announcement",
+            "source_url": "https://www.binance.com/en/support/announcement/302",
+            "title": "Binance Will List ABC Network (ABC)",
+            "raw_text": (
+                "Binance will list ABC Network (ABC). "
+                "Trading pairs: ABC/USDT, ABC/BTC. "
+                "Deposits open at 2026-05-29 08:00 UTC. "
+                "Trading opens at 2026-05-30 12:00 UTC. "
+                "Withdrawals open at 2026-05-31 12:00 UTC."
+            ),
+            "published_at": "2026-05-29T00:00:00Z",
+        }
+
+        events = parse_events(raw_source, now=self.fixed_now)
+
+        self.assertEqual(1, len(events))
+        self.assertEqual(["ABC/USDT", "ABC/BTC"], events[0]["pairs"])
+        self.assertEqual("2026-05-29T08:00:00Z", events[0]["deposit_start_time"])
+        self.assertEqual("2026-05-30T12:00:00Z", events[0]["trading_start_time"])
+        self.assertEqual("2026-05-31T12:00:00Z", events[0]["withdrawal_start_time"])
+
+    def test_exchange_timezone_map_defines_configured_exchanges(self):
+        self.assertIn("binance", EXCHANGE_TIMEZONES)
+        self.assertIn("upbit", EXCHANGE_TIMEZONES)
 
     def test_deposit_time_before_trading_time_uses_trading_time(self):
         raw_source = {

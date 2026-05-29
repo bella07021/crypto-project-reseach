@@ -26,6 +26,7 @@ _UTC_TIME_RE = re.compile(
 _SIMPLE_LISTING_SYMBOL_RE = re.compile(
     r"\b(?i:will list|to list|listing of)\s+([A-Z][A-Z0-9]{1,11})\b",
 )
+_PAIR_RE = re.compile(r"\b([A-Z][A-Z0-9]{1,11})/(USDT|USDC|USD|BTC|ETH|KRW|EUR|TRY|FDUSD)\b")
 
 
 def parse_events(raw_source: dict, now: datetime | None = None) -> list[dict]:
@@ -41,7 +42,10 @@ def parse_events(raw_source: dict, now: datetime | None = None) -> list[dict]:
     if not _looks_like_announcement_listing_signal(text):
         return []
 
-    trading_start = _extract_trading_start_time(text)
+    trading_start = _extract_time_by_context(text, _looks_like_trading_time_context)
+    deposit_start = _extract_time_by_context(text, _looks_like_deposit_time_context)
+    withdrawal_start = _extract_time_by_context(text, _looks_like_withdrawal_time_context)
+    pairs = _extract_pairs(text)
     status = _announcement_status(trading_start, now)
     return [
         _event_for_symbol(
@@ -50,6 +54,9 @@ def parse_events(raw_source: dict, now: datetime | None = None) -> list[dict]:
             status,
             "trading_start" if trading_start else "listing_announcement",
             trading_start_time=trading_start,
+            deposit_start_time=deposit_start,
+            withdrawal_start_time=withdrawal_start,
+            pairs=pairs,
         )
         for symbol in _extract_symbols(text)
     ]
@@ -130,10 +137,10 @@ def _announcement_status(trading_start_time: str | None, now: datetime | None) -
     return STATUS_TRADING_STARTED
 
 
-def _extract_trading_start_time(text: str) -> str | None:
+def _extract_time_by_context(text: str, context_predicate) -> str | None:
     for match in _UTC_TIME_RE.finditer(text):
         context = _time_context_before(text, match.start())
-        if _looks_like_trading_time_context(context):
+        if context_predicate(context):
             return _format_utc_match(match)
     return None
 
@@ -153,6 +160,7 @@ def _looks_like_trading_time_context(context: str) -> bool:
         phrase in lowered
         for phrase in (
             "open trading",
+            "trading opens",
             "trading will open",
             "trading starts",
             "trading will start",
@@ -160,6 +168,16 @@ def _looks_like_trading_time_context(context: str) -> bool:
             "start trading",
         )
     )
+
+
+def _looks_like_deposit_time_context(context: str) -> bool:
+    lowered = context.lower()
+    return any(phrase in lowered for phrase in ("deposit", "deposits open", "deposit opens"))
+
+
+def _looks_like_withdrawal_time_context(context: str) -> bool:
+    lowered = context.lower()
+    return any(phrase in lowered for phrase in ("withdrawal", "withdrawals open", "withdrawal opens"))
 
 
 def _format_utc_match(match: re.Match) -> str:
@@ -179,6 +197,12 @@ def _extract_symbols(text: str) -> list[str]:
     for match in _SIMPLE_LISTING_SYMBOL_RE.finditer(text):
         symbols.append(match.group(1).upper())
     return list(dict.fromkeys(symbols))
+
+
+def _extract_pairs(text: str) -> list[str] | None:
+    pairs = [f"{match.group(1).upper()}/{match.group(2).upper()}" for match in _PAIR_RE.finditer(text)]
+    unique_pairs = list(dict.fromkeys(pairs))
+    return unique_pairs or None
 
 
 def _source_precedence(raw_source: dict) -> int:
@@ -202,6 +226,9 @@ def _event_for_symbol(
     status: str,
     event_kind: str,
     trading_start_time: str | None = None,
+    deposit_start_time: str | None = None,
+    withdrawal_start_time: str | None = None,
+    pairs: list[str] | None = None,
 ) -> dict:
     return {
         "exchange": (raw_source["exchange"] or "").lower(),
@@ -215,9 +242,9 @@ def _event_for_symbol(
         "announcement_title": raw_source.get("title"),
         "announcement_published_at": raw_source.get("published_at"),
         "trading_start_time": trading_start_time,
-        "deposit_start_time": None,
-        "withdrawal_start_time": None,
-        "pairs": None,
+        "deposit_start_time": deposit_start_time,
+        "withdrawal_start_time": withdrawal_start_time,
+        "pairs": pairs,
         "source_type": raw_source.get("source_type"),
         "confidence": _confidence(raw_source, trading_start_time),
         "source_precedence": _source_precedence(raw_source),

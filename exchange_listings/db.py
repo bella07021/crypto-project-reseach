@@ -365,6 +365,20 @@ def upsert_normalized_asset(conn, asset: dict) -> int:
             (canonical_symbol, slug),
         ).fetchone()
         existing_id = row[0] if row else None
+        if existing_id is None:
+            row = conn.execute(
+                """
+                SELECT id
+                FROM normalized_assets
+                WHERE canonical_symbol = ?
+                  AND (slug IS NULL OR slug = '')
+                  AND (project_name IS NULL OR project_name = '')
+                ORDER BY id
+                LIMIT 1
+                """,
+                (canonical_symbol,),
+            ).fetchone()
+            existing_id = row[0] if row else None
     elif project_name:
         row = conn.execute(
             """
@@ -377,6 +391,20 @@ def upsert_normalized_asset(conn, asset: dict) -> int:
             (canonical_symbol, project_name),
         ).fetchone()
         existing_id = row[0] if row else None
+        if existing_id is None:
+            row = conn.execute(
+                """
+                SELECT id
+                FROM normalized_assets
+                WHERE canonical_symbol = ?
+                  AND (slug IS NULL OR slug = '')
+                  AND (project_name IS NULL OR project_name = '')
+                ORDER BY id
+                LIMIT 1
+                """,
+                (canonical_symbol,),
+            ).fetchone()
+            existing_id = row[0] if row else None
     else:
         row = conn.execute(
             """
