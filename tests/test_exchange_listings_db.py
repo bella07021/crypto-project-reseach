@@ -198,6 +198,76 @@ class ExchangeListingDbTests(unittest.TestCase):
         self.assertEqual(("https://x.com/CoinbaseMarkets/status/abc", "abc"), canonical_row)
         self.assertEqual((None, None), other_row)
 
+    def test_upsert_raw_source_handles_url_external_id_and_content_hash_collision(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.open_initialized_db(tmpdir) as conn:
+                content_hash = "a" * 64
+                url_row_id = db.upsert_raw_source(
+                    conn,
+                    {
+                        "exchange": "coinbase",
+                        "source_type": "official_x",
+                        "source_url": "https://x.com/CoinbaseMarkets/status/abc",
+                        "title": "ABC roadmap by URL",
+                        "raw_text": "ABC has been added to the roadmap by URL.",
+                        "fetched_at": "2026-05-29T00:00:00Z",
+                    },
+                )
+                external_id_row_id = db.upsert_raw_source(
+                    conn,
+                    {
+                        "exchange": "coinbase",
+                        "source_type": "official_x",
+                        "external_id": "abc",
+                        "title": "ABC roadmap by id",
+                        "raw_text": "ABC has been added to the roadmap by id.",
+                        "fetched_at": "2026-05-29T00:01:00Z",
+                    },
+                )
+                hash_row_id = db.upsert_raw_source(
+                    conn,
+                    {
+                        "exchange": "coinbase",
+                        "source_type": "official_x",
+                        "title": "ABC roadmap by hash",
+                        "raw_text": "ABC has been added to the roadmap by hash.",
+                        "content_hash": content_hash,
+                        "fetched_at": "2026-05-29T00:02:00Z",
+                    },
+                )
+
+                canonical_id = db.upsert_raw_source(
+                    conn,
+                    {
+                        "exchange": "coinbase",
+                        "source_type": "official_x",
+                        "source_url": "https://x.com/CoinbaseMarkets/status/abc",
+                        "external_id": "abc",
+                        "title": "ABC roadmap unified",
+                        "raw_text": "ABC has been added to the roadmap.",
+                        "content_hash": content_hash,
+                        "fetched_at": "2026-05-29T00:03:00Z",
+                    },
+                )
+                canonical_row = conn.execute(
+                    """
+                    SELECT source_url, external_id, content_hash
+                    FROM raw_sources
+                    WHERE id = ?
+                    """,
+                    (canonical_id,),
+                ).fetchone()
+                row_count = conn.execute("SELECT COUNT(*) FROM raw_sources").fetchone()[0]
+
+        self.assertEqual(url_row_id, canonical_id)
+        self.assertLess(url_row_id, external_id_row_id)
+        self.assertLess(external_id_row_id, hash_row_id)
+        self.assertEqual(
+            ("https://x.com/CoinbaseMarkets/status/abc", "abc", content_hash),
+            canonical_row,
+        )
+        self.assertEqual(3, row_count)
+
     def test_upsert_normalized_asset_creates_low_confidence_asset_from_symbol_and_name(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             with self.open_initialized_db(tmpdir) as conn:

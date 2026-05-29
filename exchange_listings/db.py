@@ -231,15 +231,15 @@ def upsert_raw_source(conn, raw_source: dict) -> int:
         ).fetchone()
         if row:
             matches.append(row[0])
-    if not matches:
-        row = conn.execute(
-            "SELECT id FROM raw_sources WHERE exchange = ? AND content_hash = ?",
-            (exchange, content_hash),
-        ).fetchone()
-        if row:
-            matches.append(row[0])
+    row = conn.execute(
+        "SELECT id FROM raw_sources WHERE exchange = ? AND content_hash = ?",
+        (exchange, content_hash),
+    ).fetchone()
+    if row:
+        matches.append(row[0])
 
-    existing_id = matches[0] if matches else None
+    matched_ids = sorted(set(matches))
+    existing_id = matched_ids[0] if matched_ids else None
 
     values = {
         "exchange": exchange,
@@ -258,15 +258,21 @@ def upsert_raw_source(conn, raw_source: dict) -> int:
     }
 
     if existing_id is not None:
-        for duplicate_id in sorted(set(matches) - {existing_id}):
+        for duplicate_id in matched_ids:
+            if duplicate_id == existing_id:
+                continue
+            duplicate_hash = hashlib.sha256(
+                f"superseded-raw-source:{duplicate_id}:{content_hash}".encode("utf-8")
+            ).hexdigest()
             conn.execute(
                 """
                 UPDATE raw_sources
                 SET source_url = NULL,
-                    external_id = NULL
+                    external_id = NULL,
+                    content_hash = ?
                 WHERE id = ?
                 """,
-                (duplicate_id,),
+                (duplicate_hash, duplicate_id),
             )
         conn.execute(
             """
