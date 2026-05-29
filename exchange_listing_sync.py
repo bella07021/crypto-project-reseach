@@ -34,16 +34,24 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
-    summary = run_sync(
-        args.db,
-        trigger_type="scheduled",
-        mode=args.mode,
-        months=args.months,
-        exchanges=args.exchanges,
-        fetcher=default_fetcher,
-    )
+    trigger_type = "backfill" if args.mode == "backfill" else "scheduled"
+    try:
+        summary = run_sync(
+            args.db,
+            trigger_type=trigger_type,
+            mode=args.mode,
+            months=args.months,
+            exchanges=args.exchanges,
+            fetcher=default_fetcher,
+        )
+    except ValueError as exc:
+        summary = {
+            "ok": False,
+            "status": "failed",
+            "error": str(exc),
+        }
     print(json.dumps(summary, sort_keys=True))
-    return 0 if summary.get("ok") else 1
+    return 0 if summary.get("ok") or summary.get("status") == "skipped" else 1
 
 
 if __name__ == "__main__":

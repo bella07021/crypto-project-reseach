@@ -49,15 +49,23 @@ def run_sync(db_path, trigger_type, mode, months=3, exchanges=None, fetcher=None
         total_updated = 0
         failures = []
 
-        for exchange in selected_exchanges:
+        for index, exchange in enumerate(selected_exchanges):
+            savepoint_name = None
             try:
                 raw_sources = list(fetch(exchange, mode=mode, months=months))
+                savepoint_name = f"exchange_sync_{index}"
+                conn.execute(f"SAVEPOINT {savepoint_name}")
                 result = _process_exchange(conn, run_id, exchange, raw_sources)
+                conn.execute(f"RELEASE SAVEPOINT {savepoint_name}")
+                savepoint_name = None
                 total_sources += result["sources_found"]
                 total_created += result["events_created"]
                 total_updated += result["events_updated"]
                 exchange_summaries.append(result)
             except Exception as exc:
+                if savepoint_name is not None:
+                    conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint_name}")
+                    conn.execute(f"RELEASE SAVEPOINT {savepoint_name}")
                 error = str(exc)
                 failures.append(f"{exchange}: {error}")
                 db.record_exchange_result(
@@ -107,7 +115,11 @@ def run_sync(db_path, trigger_type, mode, months=3, exchanges=None, fetcher=None
 def _normalize_exchanges(exchanges) -> tuple[str, ...]:
     if exchanges is None:
         return EXCHANGES
-    return tuple(exchange.lower() for exchange in exchanges)
+    selected_exchanges = tuple(exchange.lower() for exchange in exchanges)
+    unknown_exchanges = [exchange for exchange in selected_exchanges if exchange not in EXCHANGES]
+    if unknown_exchanges:
+        raise ValueError(f"Unknown exchange: {unknown_exchanges[0]}")
+    return selected_exchanges
 
 
 def _process_exchange(conn, run_id: int, exchange: str, raw_sources: list[dict]) -> dict:
@@ -134,11 +146,13 @@ def _process_exchange(conn, run_id: int, exchange: str, raw_sources: list[dict])
                 "normalized_asset_id": asset_id,
                 "raw_source_id": raw_source_id,
             }
-            if _event_exists(conn, event_row):
-                events_updated += 1
-            else:
-                events_created += 1
+            before = _event_row(conn, event_row)
             db.upsert_listing_event(conn, event_row)
+            after = _event_row(conn, event_row)
+            if before is None:
+                events_created += 1
+            elif after != before:
+                events_updated += 1
 
     source_type = _result_source_type(source_types)
     result = {
@@ -153,10 +167,10 @@ def _process_exchange(conn, run_id: int, exchange: str, raw_sources: list[dict])
     return result
 
 
-def _event_exists(conn, event: dict) -> bool:
-    row = conn.execute(
+def _event_row(conn, event: dict):
+    return conn.execute(
         """
-        SELECT id
+        SELECT *
         FROM listing_events
         WHERE exchange = ?
           AND normalized_asset_id = ?
@@ -170,7 +184,6 @@ def _event_exists(conn, event: dict) -> bool:
             event["event_family"],
         ),
     ).fetchone()
-    return row is not None
 
 
 def _result_source_type(source_types: list[str]) -> str:
