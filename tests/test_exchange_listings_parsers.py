@@ -8,6 +8,7 @@ from exchange_listings.models import (
     STATUS_TBD,
     STATUS_TRADING_SOON,
     STATUS_TRADING_STARTED,
+    STATUS_UNKNOWN,
 )
 from exchange_listings.parsers import parse_events
 
@@ -51,6 +52,41 @@ class ExchangeListingParserTests(unittest.TestCase):
         self.assertEqual(1, len(events))
         self.assertEqual(STATUS_TRADING_SOON, events[0]["status"])
         self.assertEqual("2026-05-30T12:00:00Z", events[0]["trading_start_time"])
+
+    def test_deposit_time_before_trading_time_uses_trading_time(self):
+        raw_source = {
+            "exchange": "binance",
+            "source_type": "exchange_announcement",
+            "source_url": "https://www.binance.com/en/support/announcement/301",
+            "title": "Binance Will List Sequenced Token (SEQ)",
+            "raw_text": (
+                "Deposits for Sequenced Token (SEQ) open at 2026-05-29 08:00 UTC. "
+                "Trading will open at 2026-05-30 12:00 UTC."
+            ),
+            "published_at": "2026-05-29T00:00:00Z",
+        }
+
+        events = parse_events(raw_source, now=self.fixed_now)
+
+        self.assertEqual(1, len(events))
+        self.assertEqual(STATUS_TRADING_SOON, events[0]["status"])
+        self.assertEqual("2026-05-30T12:00:00Z", events[0]["trading_start_time"])
+
+    def test_ambiguous_timing_is_left_empty(self):
+        raw_source = {
+            "exchange": "binance",
+            "source_type": "exchange_announcement",
+            "source_url": "https://www.binance.com/en/support/announcement/302",
+            "title": "Binance Will List Ambiguous Token (AMB)",
+            "raw_text": "Binance will list Ambiguous Token (AMB). Deposits open at 2026-05-29 08:00 UTC.",
+            "published_at": "2026-05-29T00:00:00Z",
+        }
+
+        events = parse_events(raw_source, now=self.fixed_now)
+
+        self.assertEqual(1, len(events))
+        self.assertEqual(STATUS_ANNOUNCED, events[0]["status"])
+        self.assertIsNone(events[0]["trading_start_time"])
 
     def test_past_trading_time_produces_trading_started(self):
         raw_source = {
@@ -134,3 +170,50 @@ class ExchangeListingParserTests(unittest.TestCase):
         self.assertEqual("ABC", event["token_symbol"])
         self.assertEqual(STATUS_TBD, event["status"])
         self.assertEqual(LISTING_TYPE_SPOT, event["listing_type"])
+
+    def test_coinbase_roadmap_removal_produces_unknown_status(self):
+        raw_source = {
+            "exchange": "Coinbase",
+            "source_type": "official_x",
+            "source_url": "https://x.com/CoinbaseMarkets/status/800",
+            "title": "Roadmap update",
+            "raw_text": "We have removed Example Token (EXT) from our listing roadmap.",
+            "published_at": "2026-05-28T12:00:00Z",
+        }
+
+        events = parse_events(raw_source)
+
+        self.assertEqual(1, len(events))
+        self.assertEqual("coinbase", events[0]["exchange"])
+        self.assertEqual("EXT", events[0]["token_symbol"])
+        self.assertEqual(STATUS_UNKNOWN, events[0]["status"])
+
+    def test_exchange_is_normalized_to_lowercase(self):
+        raw_source = {
+            "exchange": "KrAkEn",
+            "source_type": "official_x",
+            "source_url": "https://x.com/krakenlistings/status/900",
+            "title": "New listing",
+            "raw_text": "$MIX is coming to Kraken spot markets.",
+            "published_at": "2026-05-28T13:00:00Z",
+        }
+
+        events = parse_events(raw_source)
+
+        self.assertEqual(1, len(events))
+        self.assertEqual("kraken", events[0]["exchange"])
+
+    def test_simple_non_parenthesized_listing_title_extracts_symbol(self):
+        raw_source = {
+            "exchange": "okx",
+            "source_type": "exchange_announcement",
+            "source_url": "https://www.okx.com/help/901",
+            "title": "OKX will list ABC for spot trading",
+            "raw_text": "OKX will list ABC for spot trading.",
+            "published_at": "2026-05-29T00:00:00Z",
+        }
+
+        events = parse_events(raw_source, now=self.fixed_now)
+
+        self.assertEqual(1, len(events))
+        self.assertEqual("ABC", events[0]["token_symbol"])

@@ -11,6 +11,7 @@ from exchange_listings.models import (
     STATUS_TBD,
     STATUS_TRADING_SOON,
     STATUS_TRADING_STARTED,
+    STATUS_UNKNOWN,
 )
 
 
@@ -21,6 +22,9 @@ _CASH_SYMBOL_RE = re.compile(r"(?<![A-Za-z0-9])\$([A-Z][A-Z0-9]{1,11})\b")
 _UTC_TIME_RE = re.compile(
     r"\b(?P<date>\d{4}-\d{2}-\d{2})[T ](?P<time>\d{2}:\d{2}(?::\d{2})?)\s*(?P<zone>Z|UTC)\b",
     re.IGNORECASE,
+)
+_SIMPLE_LISTING_SYMBOL_RE = re.compile(
+    r"\b(?i:will list|to list|listing of)\s+([A-Z][A-Z0-9]{1,11})\b",
 )
 
 
@@ -37,7 +41,7 @@ def parse_events(raw_source: dict, now: datetime | None = None) -> list[dict]:
     if not _looks_like_announcement_listing_signal(text):
         return []
 
-    trading_start = _extract_utc_time(text)
+    trading_start = _extract_trading_start_time(text)
     status = _announcement_status(trading_start, now)
     return [
         _event_for_symbol(
@@ -57,7 +61,8 @@ def _parse_official_x(raw_source: dict, exchange: str, text: str) -> list[dict]:
     if not _looks_like_x_listing_signal(exchange, text):
         return []
 
-    return [_event_for_symbol(raw_source, symbol, STATUS_TBD, _event_kind(exchange, text)) for symbol in _extract_symbols(text)]
+    status = STATUS_UNKNOWN if exchange == "coinbase" and _looks_like_roadmap_removal(text) else STATUS_TBD
+    return [_event_for_symbol(raw_source, symbol, status, _event_kind(exchange, text)) for symbol in _extract_symbols(text)]
 
 
 def _source_text(raw_source: dict) -> str:
@@ -74,6 +79,20 @@ def _looks_like_x_listing_signal(exchange: str, text: str) -> bool:
     if exchange == "kraken":
         return "kraken" in lowered and any(keyword in lowered for keyword in ("listing", "coming", "trade", "spot"))
     return False
+
+
+def _looks_like_roadmap_removal(text: str) -> bool:
+    lowered = text.lower()
+    return any(
+        phrase in lowered
+        for phrase in (
+            "removed",
+            "remove",
+            "no longer planned",
+            "will not list",
+            "not planning to list",
+        )
+    )
 
 
 def _looks_like_announcement_listing_signal(text: str) -> bool:
@@ -111,11 +130,39 @@ def _announcement_status(trading_start_time: str | None, now: datetime | None) -
     return STATUS_TRADING_STARTED
 
 
-def _extract_utc_time(text: str) -> str | None:
-    match = _UTC_TIME_RE.search(text)
-    if not match:
-        return None
+def _extract_trading_start_time(text: str) -> str | None:
+    for match in _UTC_TIME_RE.finditer(text):
+        context = _time_context_before(text, match.start())
+        if _looks_like_trading_time_context(context):
+            return _format_utc_match(match)
+    return None
 
+
+def _time_context_before(text: str, timestamp_start: int) -> str:
+    sentence_start = max(text.rfind(".", 0, timestamp_start), text.rfind("\n", 0, timestamp_start))
+    if sentence_start == -1:
+        sentence_start = 0
+    else:
+        sentence_start += 1
+    return text[sentence_start:timestamp_start]
+
+
+def _looks_like_trading_time_context(context: str) -> bool:
+    lowered = context.lower()
+    return any(
+        phrase in lowered
+        for phrase in (
+            "open trading",
+            "trading will open",
+            "trading starts",
+            "trading will start",
+            "spot trading",
+            "start trading",
+        )
+    )
+
+
+def _format_utc_match(match: re.Match) -> str:
     time_value = match.group("time")
     if time_value.count(":") == 1:
         time_value = f"{time_value}:00"
@@ -128,6 +175,8 @@ def _extract_symbols(text: str) -> list[str]:
     for match in _PAREN_SYMBOL_RE.finditer(text):
         symbols.append(match.group(1).upper())
     for match in _CASH_SYMBOL_RE.finditer(text):
+        symbols.append(match.group(1).upper())
+    for match in _SIMPLE_LISTING_SYMBOL_RE.finditer(text):
         symbols.append(match.group(1).upper())
     return list(dict.fromkeys(symbols))
 
@@ -155,7 +204,7 @@ def _event_for_symbol(
     trading_start_time: str | None = None,
 ) -> dict:
     return {
-        "exchange": raw_source["exchange"],
+        "exchange": (raw_source["exchange"] or "").lower(),
         "project_name": raw_source.get("project_name"),
         "token_symbol": symbol,
         "listing_type": LISTING_TYPE_SPOT,
