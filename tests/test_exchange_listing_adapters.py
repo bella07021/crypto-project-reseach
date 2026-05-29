@@ -1,5 +1,6 @@
 import json
 import unittest
+from datetime import datetime, timezone
 
 from exchange_listings.adapters import (
     SourceUnavailable,
@@ -57,6 +58,8 @@ class ExchangeListingAdapterTests(unittest.TestCase):
         <a href="/announcement/en-futures"><h3>KuCoin Futures New Listing: ABCUSDT Perpetual Contract</h3></a>
         <a href="/announcement/en-world-premiere-qait-qait-listed-on-kucoin">
           <h3>World Premiere: QAIT (QAIT) Listed on KuCoin</h3>
+          <p>Trading: 13:00 on May 28, 2026 (UTC)</p>
+          <p><bdi>05/27/2026, 19:06:00</bdi></p>
         </a>
         """
 
@@ -64,6 +67,42 @@ class ExchangeListingAdapterTests(unittest.TestCase):
 
         self.assertEqual(1, len(sources))
         self.assertEqual("World Premiere: QAIT (QAIT) Listed on KuCoin", sources[0]["title"])
+        self.assertEqual("2026-05-27T19:06:00Z", sources[0]["published_at"])
+
+    def test_live_fetcher_clamps_lookback_to_three_months_and_fetches_kucoin_pages(self):
+        calls = []
+        html = """
+        <a href="/announcement/en-old-old-listed-on-kucoin">
+          <h3>Old Token (OLD) Listed on KuCoin</h3>
+          <p><bdi>01/01/2026, 00:00:00</bdi></p>
+        </a>
+        <a href="/announcement/en-new-new-listed-on-kucoin">
+          <h3>New Token (NEW) Listed on KuCoin</h3>
+          <p><bdi>05/20/2026, 00:00:00</bdi></p>
+        </a>
+        """
+
+        def fake_fetch(url):
+            calls.append(url)
+            return html
+
+        sources = fetch_live_sources(
+            "kucoin",
+            months=12,
+            limit=10,
+            fetch_text=fake_fetch,
+            now=datetime(2026, 5, 29, tzinfo=timezone.utc),
+            max_pages=2,
+        )
+
+        self.assertEqual(
+            [
+                "https://www.kucoin.com/announcement/new-listings",
+                "https://www.kucoin.com/announcement/new-listings/page/2",
+            ],
+            calls,
+        )
+        self.assertEqual(["New Token (NEW) Listed on KuCoin"], [source["title"] for source in sources])
 
     def test_mexc_sources_extract_article_titles_and_datetimes(self):
         html = """

@@ -21,20 +21,35 @@ class SourceUnavailable(RuntimeError):
     pass
 
 
-def fetch_live_sources(exchange: str, *, mode="incremental", months=3, limit=5, fetch_text=None) -> list[dict]:
-    del mode, months
+def fetch_live_sources(
+    exchange: str,
+    *,
+    mode="incremental",
+    months=3,
+    limit=5,
+    fetch_text=None,
+    now: datetime | None = None,
+    max_pages=5,
+) -> list[dict]:
+    del mode
     fetch = fetch_text or _fetch_text
     exchange = exchange.lower()
+    cutoff = _lookback_cutoff(months, now)
     if exchange == "binance":
-        return parse_binance_sources(fetch(BINANCE_LIST_URL), limit=limit)
+        sources = _fetch_paginated(fetch, _binance_url, parse_binance_sources, limit=limit, max_pages=max_pages)
+        return _filter_recent_sources(sources, cutoff, limit)
     if exchange == "okx":
-        return parse_okx_sources(fetch(OKX_LIST_URL), limit=limit)
+        sources = _fetch_paginated(fetch, _okx_url, parse_okx_sources, limit=limit, max_pages=max_pages)
+        return _filter_recent_sources(sources, cutoff, limit)
     if exchange == "bybit":
-        return parse_bybit_sources(fetch(BYBIT_LIST_URL), limit=limit)
+        sources = _fetch_paginated(fetch, _bybit_url, parse_bybit_sources, limit=limit, max_pages=max_pages)
+        return _filter_recent_sources(sources, cutoff, limit)
     if exchange == "kucoin":
-        return parse_kucoin_sources(fetch(KUCOIN_LIST_URL), limit=limit)
+        sources = _fetch_paginated(fetch, _kucoin_url, parse_kucoin_sources, limit=limit, max_pages=max_pages)
+        return _filter_recent_sources(sources, cutoff, limit)
     if exchange == "mexc":
-        return parse_mexc_sources(fetch(MEXC_LIST_URL), limit=limit)
+        sources = _fetch_paginated(fetch, _mexc_url, parse_mexc_sources, limit=limit, max_pages=max_pages)
+        return _filter_recent_sources(sources, cutoff, limit)
     if exchange == "kraken":
         return parse_kraken_sources(fetch(KRAKEN_LIST_URL), limit=limit)
     raise SourceUnavailable(f"{exchange} live source is blocked or not implemented yet")
@@ -89,18 +104,33 @@ def parse_okx_sources(page_html: str, *, limit: int) -> list[dict]:
 
 
 def parse_kucoin_sources(page_html: str, *, limit: int) -> list[dict]:
-    parser = _HeadingLinkParser({"h3"})
-    parser.feed(page_html)
+    card_pattern = re.compile(
+        r'<a[^>]+href="(?P<href>/announcement/[^"]+)"[^>]*>'
+        r".{0,2000}?"
+        r"<h3[^>]*>(?P<title>.*?)</h3>"
+        r"(?P<body>.{0,2500}?)"
+        r"</a>",
+        re.DOTALL,
+    )
     sources = []
-    for title, href in parser.items:
+    seen = set()
+    for match in card_pattern.finditer(page_html):
+        href = match.group("href")
+        title = _strip_html(match.group("title"))
+        if href in seen:
+            continue
+        seen.add(href)
         if not _looks_like_spot_listing_title(title):
             continue
+        body_text = _strip_html(match.group("body"))
+        published_at = _parse_kucoin_published_at(body_text)
         sources.append(
             _source(
                 "kucoin",
                 _absolute_url("https://www.kucoin.com", href),
                 title,
-                title,
+                f"{title}. {body_text}",
+                published_at=published_at,
                 external_id=(href or title).rsplit("/", 1)[-1],
             )
         )
@@ -217,6 +247,92 @@ def _fetch_text(url: str) -> str:
         text=True,
     )
     return result.stdout
+
+
+def _fetch_paginated(fetch, url_for_page, parser, *, limit: int, max_pages: int) -> list[dict]:
+    sources = []
+    seen_keys = set()
+    for page in range(1, max_pages + 1):
+        page_sources = parser(fetch(url_for_page(page)), limit=limit)
+        for source in page_sources:
+            key = source.get("source_url") or source.get("external_id") or source.get("title")
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            sources.append(source)
+            if len(sources) >= limit:
+                return sources
+    return sources
+
+
+def _binance_url(page: int) -> str:
+    return (
+        "https://www.binance.com/bapi/composite/v1/public/cms/article/catalog/list/query"
+        f"?catalogId=48&pageNo={page}&pageSize=30"
+    )
+
+
+def _okx_url(page: int) -> str:
+    if page == 1:
+        return OKX_LIST_URL
+    return f"{OKX_LIST_URL}/page/{page}"
+
+
+def _bybit_url(page: int) -> str:
+    return f"https://announcements.bybit.com/en/?category=new_crypto&page={page}"
+
+
+def _kucoin_url(page: int) -> str:
+    if page == 1:
+        return KUCOIN_LIST_URL
+    return f"{KUCOIN_LIST_URL}/page/{page}"
+
+
+def _mexc_url(page: int) -> str:
+    if page == 1:
+        return MEXC_LIST_URL
+    return f"{MEXC_LIST_URL}/{page}"
+
+
+def _lookback_cutoff(months: int, now: datetime | None = None) -> datetime:
+    capped_months = max(1, min(int(months or 1), 3))
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    return _subtract_months(reference.astimezone(timezone.utc), capped_months)
+
+
+def _subtract_months(value: datetime, months: int) -> datetime:
+    month = value.month - months
+    year = value.year
+    while month <= 0:
+        month += 12
+        year -= 1
+    day = min(value.day, _days_in_month(year, month))
+    return value.replace(year=year, month=month, day=day)
+
+
+def _days_in_month(year: int, month: int) -> int:
+    if month == 12:
+        next_month = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+    else:
+        next_month = datetime(year, month + 1, 1, tzinfo=timezone.utc)
+    this_month = datetime(year, month, 1, tzinfo=timezone.utc)
+    return (next_month - this_month).days
+
+
+def _filter_recent_sources(sources: list[dict], cutoff: datetime, limit: int) -> list[dict]:
+    filtered = []
+    for source in sources:
+        published_at = source.get("published_at")
+        if published_at:
+            published = datetime.fromisoformat(published_at.replace("Z", "+00:00")).astimezone(timezone.utc)
+            if published < cutoff:
+                continue
+        filtered.append(source)
+        if len(filtered) >= limit:
+            break
+    return filtered
 
 
 def _source(
@@ -376,6 +492,14 @@ def _parse_date_text(date_text: str) -> str | None:
     if not date_text:
         return None
     parsed = datetime.strptime(date_text, "%b %d, %Y")
+    return parsed.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _parse_kucoin_published_at(text: str) -> str | None:
+    match = re.search(r"\b(\d{2}/\d{2}/\d{4}),\s*(\d{2}:\d{2}:\d{2})\b", text)
+    if not match:
+        return None
+    parsed = datetime.strptime(f"{match.group(1)} {match.group(2)}", "%m/%d/%Y %H:%M:%S")
     return parsed.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
