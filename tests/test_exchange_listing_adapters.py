@@ -6,11 +6,15 @@ from exchange_listings.adapters import (
     SourceUnavailable,
     fetch_live_sources,
     parse_binance_sources,
+    parse_bithumb_sources,
+    parse_bitget_sources,
     parse_bybit_sources,
+    parse_gate_sources,
     parse_kraken_sources,
     parse_kucoin_sources,
     parse_mexc_sources,
     parse_okx_sources,
+    parse_upbit_sources,
 )
 from exchange_listings.parsers import parse_events
 
@@ -266,6 +270,100 @@ class ExchangeListingAdapterTests(unittest.TestCase):
         self.assertEqual("s1", sources[0]["external_id"])
         self.assertIn("spot trading", sources[0]["raw_text"])
 
+    def test_upbit_sources_extract_trade_category_market_additions(self):
+        html = """
+        <a href="/service_center/notice?id=6255">거래아이오넷(IO) KRW 마켓 디지털 자산 추가</a>
+        <a href="/service_center/notice?id=6254">거래오키드(OXT) 거래지원 종료 안내 (6/29 15:00)</a>
+        """
+
+        sources = parse_upbit_sources(html, limit=5)
+
+        self.assertEqual(1, len(sources))
+        self.assertEqual("upbit", sources[0]["exchange"])
+        self.assertEqual("아이오넷(IO) KRW 마켓 디지털 자산 추가", sources[0]["title"])
+        self.assertEqual("https://www.upbit.com/service_center/notice?id=6255", sources[0]["source_url"])
+
+    def test_bithumb_sources_use_next_notice_list_market_add_category(self):
+        data = {
+            "props": {
+                "pageProps": {
+                    "noticeList": [
+                        {
+                            "id": 1653423,
+                            "categoryName1": "이벤트",
+                            "title": "총 3억원 상당, 빌리언즈(BILL) 원화마켓 추가 기념 이벤트",
+                            "publicationDateTime": "2026-05-28 17:00:00",
+                        },
+                        {
+                            "id": 1653420,
+                            "categoryName1": "마켓 추가",
+                            "title": "빌리언즈(BILL) 원화 마켓 추가",
+                            "publicationDateTime": "2026-05-28 14:16:31",
+                        },
+                    ]
+                }
+            }
+        }
+        html = f'<script id="__NEXT_DATA__" type="application/json">{json.dumps(data)}</script>'
+
+        sources = parse_bithumb_sources(html, limit=5)
+
+        self.assertEqual(1, len(sources))
+        self.assertEqual("bithumb", sources[0]["exchange"])
+        self.assertEqual("빌리언즈(BILL) 원화 마켓 추가", sources[0]["title"])
+        self.assertEqual("https://feed.bithumb.com/notice/1653420", sources[0]["source_url"])
+
+    def test_gate_sources_use_next_list_data_and_skip_futures_only_titles(self):
+        data = {
+            "props": {
+                "pageProps": {
+                    "listData": {
+                        "list": [
+                            {
+                                "id": 51373,
+                                "title": "首发上线：Gate 将上线 Citrea (CTR) 合约交易、杠杆借贷交易",
+                                "brief": "Gate 将于 2026 年 5 月 26 日首发上线永续合约",
+                                "release_timestamp": "1779772468",
+                                "url": "/announcements/article/51373",
+                            },
+                            {
+                                "id": 51335,
+                                "title": "首发上线：Gate 将上线 Citrea (CTR) 现货交易与闪兑交易",
+                                "brief": "Gate 将上线 CTR/USDT 现货交易与闪兑交易",
+                                "release_timestamp": "1779674402",
+                                "url": "/announcements/article/51335",
+                            },
+                        ]
+                    }
+                }
+            }
+        }
+        html = f'<script id="__NEXT_DATA__" type="application/json">{json.dumps(data)}</script>'
+
+        sources = parse_gate_sources(html, limit=5)
+
+        self.assertEqual(1, len(sources))
+        self.assertEqual("gate", sources[0]["exchange"])
+        self.assertEqual("首发上线：Gate 将上线 Citrea (CTR) 现货交易与闪兑交易", sources[0]["title"])
+        self.assertEqual("https://www.gate.com/zh/announcements/article/51335", sources[0]["source_url"])
+
+    def test_bitget_sources_use_section_article_state(self):
+        html = """
+        <script>
+        window.__STATE__={"sectionArticle":{"items":[
+          {"contentId":"12560603884389","title":"【首发上币】Solstice（SLX）将上线 Bitget Solana 生态专区","showTime":"1779706825000"},
+          {"contentId":"12560603883519","title":"KAIO（KAIO）将上线 Bitget Launchpool，参与瓜分 14,120,000 KAIO","showTime":"1778054428000"}
+        ]}};
+        </script>
+        """
+
+        sources = parse_bitget_sources(html, limit=5)
+
+        self.assertEqual(2, len(sources))
+        self.assertEqual("bitget", sources[0]["exchange"])
+        self.assertEqual("【首发上币】Solstice（SLX）将上线 Bitget Solana 生态专区", sources[0]["title"])
+        self.assertEqual("https://www.bitget.com/zh-CN/support/articles/12560603884389", sources[0]["source_url"])
+
     def test_kraken_sources_extract_upcoming_symbols(self):
         html = """
         <h2><span>AmericanFortress</span></h2><h3><span>AF</span></h3>
@@ -287,6 +385,28 @@ class ExchangeListingAdapterTests(unittest.TestCase):
 
         self.assertEqual(["SODA"], [event["token_symbol"] for event in events])
 
-    def test_live_fetcher_raises_for_unimplemented_sources(self):
-        with self.assertRaises(SourceUnavailable):
-            fetch_live_sources("coinbase", limit=1, fetch_text=lambda url: "")
+    def test_live_fetcher_supports_all_configured_listing_sources(self):
+        html_by_exchange = {
+            "upbit": '<a href="/service_center/notice?id=6255">거래아이오넷(IO) KRW 마켓 디지털 자산 추가</a>',
+            "bithumb": '<script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"noticeList":[{"id":1,"categoryName1":"마켓 추가","title":"테스트(TST) 원화 마켓 추가","publicationDateTime":"2026-05-28 14:16:31"}]}}}</script>',
+            "gate": '<script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"listData":{"list":[{"id":1,"title":"Gate 将上线 Test (TST) 现货交易","brief":"Gate 将上线 TST/USDT 现货交易","release_timestamp":"1779674402","url":"/announcements/article/1"}]}}}}</script>',
+            "bitget": '{"sectionArticle":{"items":[{"contentId":"1","title":"Test（TST）将上线 Bitget","showTime":"1779706825000"}]}}',
+            "coinbase": "<html><title>Increasing transparency for new asset listings on Coinbase</title></html>",
+        }
+        calls = []
+
+        for exchange, html in html_by_exchange.items():
+            with self.subTest(exchange=exchange):
+                calls.clear()
+
+                def fake_fetch(url):
+                    calls.append(url)
+                    return html
+
+                sources = fetch_live_sources(exchange, limit=2, max_pages=1, fetch_text=fake_fetch)
+
+                self.assertEqual(1, len(calls))
+                if exchange == "coinbase":
+                    self.assertEqual([], sources)
+                else:
+                    self.assertGreaterEqual(len(sources), 1)

@@ -17,7 +17,7 @@ from exchange_listings.models import (
 
 PARSER_VERSION = "exchange-listings-parser-v1"
 
-_PAREN_SYMBOL_RE = re.compile(r"\(([A-Z0-9]{2,12})\)")
+_PAREN_SYMBOL_RE = re.compile(r"[\(（]([A-Z0-9]{1,12})[\)）]")
 _CASH_SYMBOL_RE = re.compile(r"(?<![A-Za-z0-9])\$([A-Z][A-Z0-9]{1,11})\b")
 _UTC_TIME_RE = re.compile(
     r"\b(?P<date>\d{4}-\d{2}-\d{2})[T ](?P<time>\d{2}:\d{2}(?::\d{2})?)\s*(?P<zone>Z|UTC)\b",
@@ -117,6 +117,16 @@ def _looks_like_announcement_listing_signal(text: str) -> bool:
             "start trading",
             "거래지원",
             "신규 거래",
+            "마켓 추가",
+            "마켓추가",
+            "디지털 자산 추가",
+            "디지털자산추가",
+            "将上线",
+            "已上线",
+            "上线",
+            "上币",
+            "新增",
+            "现货交易",
         )
     )
 
@@ -193,7 +203,9 @@ def _format_utc_match(match: re.Match) -> str:
 def _extract_symbols(text: str) -> list[str]:
     symbols = []
     for match in _PAREN_SYMBOL_RE.finditer(text):
-        symbols.append(match.group(1).upper())
+        symbol = match.group(1).upper()
+        if symbol not in {"UTC", "KST", "UTC8", "GMT"}:
+            symbols.append(symbol)
     for match in _CASH_SYMBOL_RE.finditer(text):
         symbols.append(match.group(1).upper())
     for match in _SIMPLE_LISTING_SYMBOL_RE.finditer(text):
