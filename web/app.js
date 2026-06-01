@@ -185,6 +185,10 @@ function renderList(el, items, emptyText) {
 }
 
 function renderTgeEvidence(el, assessment) {
+  if (assessment.tge_status !== "已 TGE") {
+    renderList(el, [], "暂无 TGE 证据。");
+    return;
+  }
   const linkedItems = assessment.tge_evidence_links || [];
   if (linkedItems.length) {
     el.innerHTML = "";
@@ -226,6 +230,13 @@ function cmcListedExchanges(assessment) {
   return assessment.listed_exchanges || [];
 }
 
+function visibleTgeMethod(assessment) {
+  if (assessment.tge_status !== "已 TGE") return "";
+  const method = String(assessment.tge_method || "").trim();
+  if (method.toLowerCase().includes("rootdata")) return "";
+  return method;
+}
+
 function renderRoadmap(el, assessment) {
   const exchanges = cmcListedExchanges(assessment);
   el.innerHTML = "";
@@ -261,11 +272,12 @@ function renderReport(assessment, workbook) {
   get("socialReason").textContent = scoreReason("social", assessment);
   get("fetchStatus").textContent = assessment.fetch_status || "unknown";
   get("tgeStatus").textContent = assessment.tge_status || "--";
-  get("tgeProbability").textContent = assessment.tge_status === "已 TGE" ? "已 TGE" : `${integerText(assessment.tge_probability)}%`;
+  get("tgeProbability").textContent = assessment.tge_status === "已 TGE" ? "已 TGE" : "未 TGE";
   get("tgeDate").textContent = assessment.tge_status === "已 TGE"
     ? `TGE 日期: ${assessment.tge_date || "待确认"}`
-    : "未 TGE 时为概率估算";
-  get("tgeMethod").textContent = assessment.tge_method ? `方式: ${assessment.tge_method}` : "方式: --";
+    : "未 TGE";
+  const tgeMethod = visibleTgeMethod(assessment);
+  get("tgeMethod").textContent = tgeMethod ? `方式: ${tgeMethod}` : "方式: --";
   renderList(get("evidenceList"), uniqueEvidence(assessment), "暂无证据。");
   renderTgeEvidence(get("tgeEvidenceList"), assessment);
   renderRoadmap(get("roadmapList"), assessment);
