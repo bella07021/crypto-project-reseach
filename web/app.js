@@ -333,6 +333,7 @@ async function refreshActiveRequestStatus() {
     return;
   }
   renderRequestStatus(payload.request || state.activeRequest, false);
+  await loadDashboard();
 }
 
 function startRequestPolling(request) {
