@@ -351,12 +351,13 @@ function syncActiveRequestWithDashboard() {
 }
 
 function roadmapSummary(row) {
-  const exchanges = row.listed_exchanges || [];
-  const score = Number(row.exchange_score || 0);
-  const progress = Math.max(0, Math.min(100, Number(row.exchange_progress || 0)));
+  const exchanges = cmcListedExchanges(row);
+  const hasCmcData = exchanges.length > 0;
+  const score = hasCmcData ? Number(row.exchange_score || 0) : 0;
+  const progress = hasCmcData ? Math.max(0, Math.min(100, Number(row.exchange_progress || 0))) : 0;
   const chips = exchanges.length
     ? exchanges.map((exchange) => `<span>${exchange}</span>`).join("")
-    : "<span>暂无图内交易所</span>";
+    : "<span>暂无 CMC 上线交易所</span>";
   return `
     <div class="exchange-progress">
       <div class="progress-head">
