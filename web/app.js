@@ -220,12 +220,17 @@ function eventTypeLabel(event, assessment) {
   return event.type || "Event";
 }
 
+function cmcListedExchanges(assessment) {
+  const source = String(assessment.exchange_source || "").toLowerCase();
+  if (!source.includes("coinmarketcap") && source !== "cmc") return [];
+  return assessment.listed_exchanges || [];
+}
+
 function renderRoadmap(el, assessment) {
-  const events = sortedRoadmap(assessment);
-  const exchanges = assessment.listed_exchanges || [];
+  const exchanges = cmcListedExchanges(assessment);
   el.innerHTML = "";
-  if (!events.length && !exchanges.length) {
-    el.innerHTML = '<div class="empty-state">暂无上线交易所事件。</div>';
+  if (!exchanges.length) {
+    el.innerHTML = '<div class="empty-state">暂无 CMC 上线交易所数据。</div>';
     return;
   }
   for (const exchange of exchanges) {
@@ -233,22 +238,6 @@ function renderRoadmap(el, assessment) {
     item.className = "timeline-item";
     item.innerHTML = `
       <div class="timeline-name">${exchange}</div>
-    `;
-    el.appendChild(item);
-  }
-  for (const event of events) {
-    const item = document.createElement("div");
-    item.className = "timeline-item";
-    const days = event.days_after_tge === "" || event.days_after_tge === undefined
-      ? "未计算"
-      : `TGE 后 ${event.days_after_tge} 天`;
-    item.innerHTML = `
-      <div class="timeline-type">${eventTypeLabel(event, assessment)}</div>
-      <div class="timeline-name">${event.name || "--"}</div>
-      <div>
-        <div class="timeline-date">${event.date || "--"}</div>
-        <div class="timeline-days">${days}</div>
-      </div>
     `;
     el.appendChild(item);
   }
@@ -388,8 +377,8 @@ function tgeSummary(row) {
     if (row.request_status === "processing") return "队列处理中";
     return "队列等待中";
   }
-  if (row.tge_status === "已 TGE") return `${row.tge_method || "TGE"} · ${row.tge_date || "--"}`;
-  return `未 TGE · ${integerText(row.tge_probability)}%`;
+  if (row.tge_status === "已 TGE") return row.tge_date || "--";
+  return "未 TGE";
 }
 
 function renderDashboard() {
