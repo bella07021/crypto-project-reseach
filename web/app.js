@@ -40,6 +40,26 @@ function formPayload() {
   };
 }
 
+function xInputValue(project) {
+  const value = String(project?.x_handle || "").trim();
+  if (!value || /^https?:\/\//i.test(value)) return value;
+  return `https://x.com/${value.replace(/^@/, "")}`;
+}
+
+function populateProjectForm(project) {
+  if (!project) return;
+  const values = {
+    token_ticker: project.token_ticker || "",
+    project_name: project.project_name || "",
+    x_handle: xInputValue(project),
+    rootdata_url: project.rootdata_url || "",
+  };
+  for (const [name, value] of Object.entries(values)) {
+    const input = form.elements.namedItem(name);
+    if (input) input.value = value;
+  }
+}
+
 function normalizeHandle(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
@@ -238,6 +258,7 @@ function renderReport(assessment, workbook) {
   state.currentAssessment = assessment;
   state.activeRequest = null;
   stopRequestPolling();
+  populateProjectForm(assessment);
   const fragment = document.querySelector("#reportTemplate").content.cloneNode(true);
   const get = (name) => fragment.querySelector(`[data-field="${name}"]`);
   get("tokenTicker").textContent = tokenLabel(assessment);
@@ -265,6 +286,7 @@ function renderReport(assessment, workbook) {
 
 function renderRequestStatus(request, created) {
   state.activeRequest = request;
+  populateProjectForm(request);
   const statusText = request.status === "processing"
     ? "项目正在抓取与评分中，通常约 1 分钟内完成。"
     : request.status === "failed"
