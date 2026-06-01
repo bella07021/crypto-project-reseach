@@ -39,6 +39,8 @@ def parse_events(raw_source: dict, now: datetime | None = None) -> list[dict]:
 
     if source_type not in {"exchange_announcement", "official_blog"}:
         return []
+    if source_type == "official_blog" and exchange == "coinbase" and _looks_like_coinbase_roadmap(text):
+        return [_event_for_symbol(raw_source, symbol, STATUS_TBD, "roadmap") for symbol in _extract_symbols(text)]
     if not _looks_like_announcement_listing_signal(text):
         return []
 
@@ -86,6 +88,11 @@ def _looks_like_x_listing_signal(exchange: str, text: str) -> bool:
     if exchange == "kraken":
         return "kraken" in lowered and any(keyword in lowered for keyword in ("listing", "coming", "trade", "spot"))
     return False
+
+
+def _looks_like_coinbase_roadmap(text: str) -> bool:
+    lowered = text.lower()
+    return "coinbase" in lowered and "roadmap" in lowered
 
 
 def _looks_like_roadmap_removal(text: str) -> bool:

@@ -9,6 +9,7 @@ from exchange_listings.adapters import (
     parse_bithumb_sources,
     parse_bitget_sources,
     parse_bybit_sources,
+    parse_coinbase_sources,
     parse_gate_sources,
     parse_kraken_sources,
     parse_kucoin_sources,
@@ -270,6 +271,49 @@ class ExchangeListingAdapterTests(unittest.TestCase):
         self.assertEqual("s1", sources[0]["external_id"])
         self.assertIn("spot trading", sources[0]["raw_text"])
 
+    def test_coinbase_sources_extract_roadmap_posts_from_x_search_html(self):
+        html = """
+        <article>
+          <a href="/CoinbaseMarkets/status/2057085756120748167">May 30</a>
+          <div>Assets added to the roadmap today: Example Token (EXT) on Base.</div>
+        </article>
+        <article>
+          <a href="https://x.com/CoinbaseMarkets/status/2057000000000000000">May 29</a>
+          <div>Trading will begin for Old Token (OLD) today. This is not a roadmap update.</div>
+        </article>
+        """
+
+        sources = parse_coinbase_sources(html, limit=5)
+
+        self.assertEqual(1, len(sources))
+        self.assertEqual("coinbase", sources[0]["exchange"])
+        self.assertEqual("official_x", sources[0]["source_type"])
+        self.assertEqual("https://x.com/CoinbaseMarkets/status/2057085756120748167", sources[0]["source_url"])
+        self.assertEqual("2057085756120748167", sources[0]["external_id"])
+        self.assertIn("Example Token (EXT)", sources[0]["raw_text"])
+
+    def test_coinbase_sources_extract_assets_from_official_roadmap_blog(self):
+        html = """
+        <h2>Roadmap</h2>
+        <p>Updates to the roadmap will be made here and announced via our official Twitter account.</p>
+        <p>Assets on the Ethereum network (ERC-20 tokens)</p>
+        <p>Nexus (NEX) - Contract address: 0xf57D49646621F563b0B905aFc8336923AC569Ec5</p>
+        <p>Assets on the Base network</p>
+        <p>Citrea (CTR) - Contract address: 0x11030f79109269d796fd0fb956d6244e502757f7</p>
+        <p>o1.exchange (O) - Contract address: 0x1185cB5122Edad199BdBC0cbd7a0457E448f23c7</p>
+        <p>* This is not an exhaustive list of all assets which we have decided to list.</p>
+        """
+
+        sources = parse_coinbase_sources(html, limit=5)
+
+        self.assertEqual(["NEX", "CTR", "O"], [source["external_id"] for source in sources])
+        self.assertEqual(
+            ["Coinbase roadmap: Nexus (NEX)", "Coinbase roadmap: Citrea (CTR)", "Coinbase roadmap: o1.exchange (O)"],
+            [source["title"] for source in sources],
+        )
+        self.assertEqual(["official_blog", "official_blog", "official_blog"], [source["source_type"] for source in sources])
+        self.assertIn("Nexus (NEX)", sources[0]["raw_text"])
+
     def test_upbit_sources_extract_trade_category_market_additions(self):
         html = """
         <a href="/service_center/notice?id=6255">거래아이오넷(IO) KRW 마켓 디지털 자산 추가</a>
@@ -391,7 +435,12 @@ class ExchangeListingAdapterTests(unittest.TestCase):
             "bithumb": '<script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"noticeList":[{"id":1,"categoryName1":"마켓 추가","title":"테스트(TST) 원화 마켓 추가","publicationDateTime":"2026-05-28 14:16:31"}]}}}</script>',
             "gate": '<script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"listData":{"list":[{"id":1,"title":"Gate 将上线 Test (TST) 现货交易","brief":"Gate 将上线 TST/USDT 现货交易","release_timestamp":"1779674402","url":"/announcements/article/1"}]}}}}</script>',
             "bitget": '{"sectionArticle":{"items":[{"contentId":"1","title":"Test（TST）将上线 Bitget","showTime":"1779706825000"}]}}',
-            "coinbase": "<html><title>Increasing transparency for new asset listings on Coinbase</title></html>",
+            "coinbase": """
+                <article>
+                  <a href="/CoinbaseMarkets/status/2057085756120748167">May 30</a>
+                  <div>Assets added to the roadmap today: Example Token (EXT) on Base.</div>
+                </article>
+            """,
         }
         calls = []
 
@@ -406,7 +455,71 @@ class ExchangeListingAdapterTests(unittest.TestCase):
                 sources = fetch_live_sources(exchange, limit=2, max_pages=1, fetch_text=fake_fetch)
 
                 self.assertEqual(1, len(calls))
-                if exchange == "coinbase":
-                    self.assertEqual([], sources)
-                else:
-                    self.assertGreaterEqual(len(sources), 1)
+                self.assertGreaterEqual(len(sources), 1)
+
+    def test_coinbase_live_fetcher_uses_x_roadmap_search_url(self):
+        calls = []
+
+        def fake_fetch(url):
+            calls.append(url)
+            return """
+                <article>
+                  <a href="/CoinbaseMarkets/status/2057085756120748167">May 30</a>
+                  <div>Assets added to the roadmap today: Example Token (EXT) on Base.</div>
+                </article>
+            """
+
+        sources = fetch_live_sources("coinbase", limit=2, fetch_text=fake_fetch)
+
+        self.assertEqual(["https://x.com/search?q=from%3ACoinbaseMarkets%20roadmap&src=typed_query"], calls)
+        self.assertEqual(["2057085756120748167"], [source["external_id"] for source in sources])
+
+    def test_coinbase_live_fetcher_falls_back_to_official_roadmap_blog_when_x_is_blocked(self):
+        calls = []
+        blog_html = """
+        <h2>Roadmap</h2>
+        <p>Assets on the Ethereum network (ERC-20 tokens)</p>
+        <p>Nexus (NEX) - Contract address: 0xf57D49646621F563b0B905aFc8336923AC569Ec5</p>
+        <p>* This is not an exhaustive list of all assets which we have decided to list.</p>
+        """
+
+        def fake_fetch(url):
+            calls.append(url)
+            return "<html>X login wall</html>" if "x.com/search" in url else blog_html
+
+        sources = fetch_live_sources("coinbase", limit=2, fetch_text=fake_fetch)
+
+        self.assertEqual(
+            [
+                "https://x.com/search?q=from%3ACoinbaseMarkets%20roadmap&src=typed_query",
+                "https://www.coinbase.com/zh-cn/blog/increasing-transparency-for-new-asset-listings-on-coinbase",
+            ],
+            calls,
+        )
+        self.assertEqual(["NEX"], [source["external_id"] for source in sources])
+
+    def test_coinbase_live_fetcher_falls_back_to_blog_when_x_fetch_raises(self):
+        calls = []
+        blog_html = """
+        <h2>Roadmap</h2>
+        <p>Assets on the Ethereum network (ERC-20 tokens)</p>
+        <p>Nexus (NEX) - Contract address: 0xf57D49646621F563b0B905aFc8336923AC569Ec5</p>
+        <p>* This is not an exhaustive list of all assets which we have decided to list.</p>
+        """
+
+        def fake_fetch(url):
+            calls.append(url)
+            if "x.com/search" in url:
+                raise RuntimeError("x login wall")
+            return blog_html
+
+        sources = fetch_live_sources("coinbase", limit=2, fetch_text=fake_fetch)
+
+        self.assertEqual(
+            [
+                "https://x.com/search?q=from%3ACoinbaseMarkets%20roadmap&src=typed_query",
+                "https://www.coinbase.com/zh-cn/blog/increasing-transparency-for-new-asset-listings-on-coinbase",
+            ],
+            calls,
+        )
+        self.assertEqual(["NEX"], [source["external_id"] for source in sources])

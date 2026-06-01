@@ -17,6 +17,7 @@ KUCOIN_LIST_URL = "https://www.kucoin.com/announcement/new-listings"
 MEXC_LIST_URL = "https://www.mexc.fm/announcements/new-listings"
 KRAKEN_LIST_URL = "https://www.kraken.com/zh-cn/listings"
 COINBASE_TRANSPARENCY_URL = "https://www.coinbase.com/zh-cn/blog/increasing-transparency-for-new-asset-listings-on-coinbase"
+COINBASE_X_ROADMAP_URL = "https://x.com/search?q=from%3ACoinbaseMarkets%20roadmap&src=typed_query"
 UPBIT_LIST_URL = "https://www.upbit.com/service_center/notice"
 BITHUMB_LIST_URL = "https://feed.bithumb.com/notice"
 GATE_LIST_URL = "https://www.gate.com/zh/announcements/newlisted"
@@ -58,6 +59,12 @@ def fetch_live_sources(
         sources = _fetch_paginated(fetch, _mexc_url, parse_mexc_sources, limit=limit, max_pages=max_pages, cutoff=cutoff)
         return _filter_recent_sources(sources, cutoff, limit)
     if exchange == "coinbase":
+        try:
+            sources = parse_coinbase_sources(browser_fetch(COINBASE_X_ROADMAP_URL), limit=limit)
+        except Exception:
+            sources = []
+        if sources:
+            return sources
         return parse_coinbase_sources(browser_fetch(COINBASE_TRANSPARENCY_URL), limit=limit)
     if exchange == "upbit":
         sources = _fetch_paginated(browser_fetch, _upbit_url, parse_upbit_sources, limit=limit, max_pages=max_pages, cutoff=cutoff)
@@ -77,8 +84,32 @@ def fetch_live_sources(
 
 
 def parse_coinbase_sources(page_html: str, *, limit: int) -> list[dict]:
-    del page_html, limit
-    return []
+    sources = []
+    seen = set()
+    for status_id, text in _x_status_contexts(page_html, "CoinbaseMarkets"):
+        lowered = text.lower()
+        if status_id in seen or "roadmap" not in lowered or "not a roadmap" in lowered:
+            continue
+        seen.add(status_id)
+        sources.append(
+            {
+                "exchange": "coinbase",
+                "source_type": "official_x",
+                "source_url": f"https://x.com/CoinbaseMarkets/status/{status_id}",
+                "title": _coinbase_x_title(text),
+                "raw_text": text,
+                "published_at": None,
+                "fetched_at": _utc_now(),
+                "external_id": status_id,
+                "raw_payload_json": None,
+                "detection_reason": "coinbase_x_roadmap_search",
+            }
+        )
+        if len(sources) >= limit:
+            break
+    if sources:
+        return sources
+    return _parse_coinbase_roadmap_blog_sources(page_html, limit=limit)
 
 
 def parse_binance_sources(payload: str, *, limit: int) -> list[dict]:
@@ -661,6 +692,83 @@ def _parse_bitget_anchor_sources(page_html: str, *, limit: int) -> list[dict]:
                 title,
                 external_id=href.rsplit("/", 1)[-1],
             )
+        )
+        if len(sources) >= limit:
+            break
+    return sources
+
+
+def _x_status_contexts(page_html: str, handle: str) -> list[tuple[str, str]]:
+    unescaped = html.unescape(page_html)
+    pattern = re.compile(
+        rf'(?:https://x\.com|https://twitter\.com|)\/{re.escape(handle)}\/status\/(?P<id>\d+)',
+        re.IGNORECASE,
+    )
+    article_contexts = []
+    for article in re.findall(r"<article\b[^>]*>.*?</article>", unescaped, flags=re.DOTALL | re.IGNORECASE):
+        match = pattern.search(article)
+        if match:
+            article_contexts.append((match.group("id"), _strip_html(article)))
+    if article_contexts:
+        return article_contexts
+    contexts = []
+    for match in pattern.finditer(unescaped):
+        start = max(0, match.start() - 1200)
+        end = min(len(unescaped), match.end() + 2400)
+        text = _strip_html(unescaped[start:end])
+        contexts.append((match.group("id"), text))
+    return contexts
+
+
+def _coinbase_x_title(text: str) -> str:
+    sentences = re.split(r"(?<=[.!?])\s+", _collapse_space(text))
+    for sentence in sentences:
+        if "roadmap" in sentence.lower():
+            return sentence[:180]
+    return _collapse_space(text)[:180]
+
+
+def _parse_coinbase_roadmap_blog_sources(page_html: str, *, limit: int) -> list[dict]:
+    text = _strip_html(page_html)
+    start = text.lower().find("assets on the")
+    end = text.lower().find("this is not an exhaustive", start)
+    if start == -1 or end == -1:
+        return []
+    roadmap_text = text[start:end]
+    roadmap_text = re.sub(r"Contract address:\s*0x[a-fA-F0-9]{40}", "Contract address:", roadmap_text)
+    roadmap_text = re.sub(
+        r"\bAssets on the [A-Za-z0-9 -]+(?:network|tokens)\b(?:\s*\([^)]+\))?",
+        " ",
+        roadmap_text,
+        flags=re.IGNORECASE,
+    )
+    pattern = re.compile(
+        r"(?P<name>[A-Za-z0-9][A-Za-z0-9 .'&-]{0,80}?)\s*[\(（](?P<symbol>[A-Z0-9]{1,12})[\)）]\s*-\s*Contract address:",
+        re.DOTALL,
+    )
+    sources = []
+    seen = set()
+    for match in pattern.finditer(roadmap_text):
+        symbol = match.group("symbol").upper()
+        if symbol in seen:
+            continue
+        seen.add(symbol)
+        project_name = _collapse_space(match.group("name"))
+        raw_text = f"{project_name} ({symbol}) has been added to the Coinbase listing roadmap."
+        sources.append(
+            {
+                "exchange": "coinbase",
+                "source_type": "official_blog",
+                "source_url": COINBASE_TRANSPARENCY_URL,
+                "title": f"Coinbase roadmap: {project_name} ({symbol})",
+                "raw_text": raw_text,
+                "published_at": None,
+                "fetched_at": _utc_now(),
+                "external_id": symbol,
+                "raw_payload_json": None,
+                "detection_reason": "coinbase_roadmap_blog",
+                "project_name": project_name,
+            }
         )
         if len(sources) >= limit:
             break

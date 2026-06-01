@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from exchange_listings.models import (
     EXCHANGE_TIMEZONES,
     LISTING_TYPE_SPOT,
+    SOURCE_PRECEDENCE_BLOG,
     SOURCE_PRECEDENCE_X,
     STATUS_ANNOUNCED,
     STATUS_TBD,
@@ -37,6 +38,26 @@ class ExchangeListingParserTests(unittest.TestCase):
         self.assertEqual(LISTING_TYPE_SPOT, event["listing_type"])
         self.assertEqual("roadmap", event["event_kind"])
         self.assertEqual(SOURCE_PRECEDENCE_X, event["source_precedence"])
+
+    def test_coinbase_roadmap_blog_produces_tbd_spot_roadmap_event(self):
+        raw_source = {
+            "exchange": "coinbase",
+            "source_type": "official_blog",
+            "source_url": "https://www.coinbase.com/blog/increasing-transparency-for-new-asset-listings-on-coinbase",
+            "title": "Coinbase roadmap: Nexus (NEX)",
+            "raw_text": "Nexus (NEX) has been added to the Coinbase listing roadmap.",
+            "published_at": None,
+        }
+
+        events = parse_events(raw_source)
+
+        self.assertEqual(1, len(events))
+        event = events[0]
+        self.assertEqual("coinbase", event["exchange"])
+        self.assertEqual("NEX", event["token_symbol"])
+        self.assertEqual(STATUS_TBD, event["status"])
+        self.assertEqual("roadmap", event["event_kind"])
+        self.assertEqual(SOURCE_PRECEDENCE_BLOG, event["source_precedence"])
 
     def test_future_trading_time_produces_trading_soon(self):
         raw_source = {
