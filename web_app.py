@@ -1142,17 +1142,24 @@ def dashboard_rows(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def request_dashboard_rows(requests: list[dict[str, Any]], history: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    scored_keys = {
-        normalize_rootdata_url(str(row.get("rootdata_url", ""))).lower() or str(row.get("x_handle", "")).lower()
-        for row in history
-    }
+    latest_scored_at: dict[str, datetime | None] = {}
+    for row in history:
+        key = normalize_rootdata_url(str(row.get("rootdata_url", ""))).lower() or str(row.get("x_handle", "")).lower()
+        if not key:
+            continue
+        assessed_at = parse_iso_datetime(str(row.get("assessed_at", "")))
+        previous = latest_scored_at.get(key)
+        if key not in latest_scored_at or (assessed_at and (not previous or assessed_at > previous)):
+            latest_scored_at[key] = assessed_at
     rows = []
     for request in requests:
         status = str(request.get("status", ""))
         if status == "done":
             continue
         request_key = project_request_key(str(request.get("rootdata_url", "")), str(request.get("x_handle", "")))
-        if request_key in scored_keys:
+        requested_at = parse_iso_datetime(str(request.get("requested_at", "")))
+        scored_at = latest_scored_at.get(request_key)
+        if request_key in latest_scored_at and (scored_at is None or not requested_at or scored_at >= requested_at):
             continue
         x_handle = str(request.get("x_handle", ""))
         rows.append(

@@ -765,6 +765,36 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(rows[0]["token_ticker"], "NEW")
         self.assertEqual(rows[0]["project_name"], "New Project")
 
+    def test_request_dashboard_rows_shows_active_refresh_request_over_old_score(self):
+        requests = [
+            {
+                "request_id": "refresh1",
+                "status": "processing",
+                "token_ticker": "BILL",
+                "project_name": "Billions Network",
+                "x_handle": "billions_ntwk",
+                "rootdata_url": "https://cn.rootdata.com/projects/detail/Billions?k=M",
+                "requested_at": "2026-06-02T09:00:00+00:00",
+            }
+        ]
+        history = [
+            {
+                "x_handle": "billions_ntwk",
+                "rootdata_url": "https://cn.rootdata.com/projects/detail/Billions?k=M",
+                "token_ticker": "BILL",
+                "project_name": "Billions Network",
+                "total_score": 55.19,
+                "assessed_at": "2026-06-02T08:00:00+00:00",
+            }
+        ]
+
+        rows = request_dashboard_rows(requests, history)
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["request_status"], "processing")
+        self.assertEqual(rows[0]["token_ticker"], "BILL")
+        self.assertEqual(rows[0]["total_score"], "")
+
     def test_request_status_payload_returns_done_assessment(self):
         requests = [
             {

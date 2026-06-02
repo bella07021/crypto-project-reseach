@@ -398,13 +398,13 @@ function renderRequestStatus(request, created) {
   state.activeRequest = request;
   populateProjectForm(request);
   const statusText = request.status === "processing"
-    ? "项目正在抓取与评分中，通常约 1 分钟内完成。"
+    ? "数据正在更新中，完成前不会展示旧评分。"
     : request.status === "failed"
       ? `处理失败：${request.error || "--"}`
-      : "已加入本地抓取队列，通常约 1 分钟内返回结果。";
+      : "数据正在更新中，已加入抓取队列。";
   const helpText = request.status === "failed"
     ? "可联系负责人检查项目链接或重新提交。"
-    : "若超过 5 分钟仍未返回结果，请联系负责人重启本地处理脚本。";
+    : "抓取完成后会自动替换为最新评分。";
   reportMount.innerHTML = `
     <section class="report-section">
       <div class="section-title">
@@ -465,6 +465,7 @@ async function loadDashboard() {
 
 function syncActiveRequestWithDashboard() {
   if (!state.activeRequest) return;
+  if (["pending", "processing"].includes(String(state.activeRequest.status || ""))) return;
   const completed = state.dashboardRows.find((row) => !row.request_status && sameProject(state.activeRequest, row));
   if (completed) {
     renderReport(completed.assessment || completed, completed.assessment?.workbook);
