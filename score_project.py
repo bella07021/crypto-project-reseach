@@ -12,6 +12,10 @@ from xml.sax.saxutils import escape
 from project_scorer import (
     WEIGHTS,
     calculate_funding_score,
+    calculate_funding_age_multiplier,
+    calculate_funding_amount_bonus,
+    calculate_funding_rank_score,
+    calculate_sector_funding_score,
     calculate_chain_score,
     calculate_investor_score,
     calculate_social_percentile,
@@ -64,6 +68,20 @@ def parse_date(value: str | None) -> date | None:
     if not value:
         return None
     return date.fromisoformat(value)
+
+
+def parse_float(value: object) -> float | None:
+    if value in {None, ""}:
+        return None
+    try:
+        return float(str(value).replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_int(value: object) -> int | None:
+    parsed = parse_float(value)
+    return int(parsed) if parsed is not None else None
 
 
 def find_project_row(rows: Iterable[dict[str, str]], x_handle: str, rootdata_url: str) -> dict[str, str] | None:
@@ -139,6 +157,63 @@ def fundraising_investors(rows: Iterable[dict[str, str]]) -> list[str]:
     return investors
 
 
+def same_fundraising_sector(left: dict[str, str], right: dict[str, str]) -> bool:
+    for key in ("sector_id", "sector_cn", "sector_en"):
+        left_value = str(left.get(key, "")).strip().lower()
+        right_value = str(right.get(key, "")).strip().lower()
+        if left_value and right_value and left_value == right_value:
+            return True
+    return False
+
+
+def sector_amounts(fundraising_rows: Iterable[dict[str, str]], sector_row: dict[str, str]) -> list[float]:
+    amounts: list[float] = []
+    for row in fundraising_rows:
+        if not same_fundraising_sector(row, sector_row):
+            continue
+        amount = parse_float(row.get("amount_usd"))
+        if amount and amount > 0:
+            amounts.append(amount)
+    return amounts
+
+
+def best_sector_funding_match(
+    matched_rows: Iterable[dict[str, str]],
+    fundraising_rows: Iterable[dict[str, str]],
+    *,
+    today: date,
+) -> tuple[dict[str, str] | None, dict[str, float | int | str]]:
+    best_row: dict[str, str] | None = None
+    best_components: dict[str, float | int | str] = {}
+    all_rows = list(fundraising_rows)
+    for row in matched_rows:
+        rank = parse_int(row.get("sector_rank"))
+        if not rank:
+            continue
+        amount = parse_float(row.get("amount_usd"))
+        funding_date = parse_date(row.get("funding_date"))
+        amounts = sector_amounts(all_rows, row)
+        score = calculate_sector_funding_score(
+            sector_rank=rank,
+            amount_usd=amount,
+            sector_amounts_usd=amounts,
+            funding_date=funding_date,
+            today=today,
+        )
+        components: dict[str, float | int | str] = {
+            "score": score,
+            "rank_score": calculate_funding_rank_score(rank),
+            "amount_bonus": calculate_funding_amount_bonus(amount, amounts),
+            "age_multiplier": calculate_funding_age_multiplier(funding_date, today=today),
+            "sector_rank": rank,
+            "sector": row.get("sector_cn") or row.get("sector_en") or "",
+        }
+        if best_row is None or score > float(best_components.get("score", 0)):
+            best_row = row
+            best_components = components
+    return best_row, best_components
+
+
 def merge_investors(primary: Iterable[str], fallback: Iterable[str]) -> tuple[list[str], list[str]]:
     investors: list[str] = []
     added_from_fallback: list[str] = []
@@ -187,9 +262,6 @@ def build_assessment(args: argparse.Namespace) -> dict[str, object]:
         else ((live_detail.team_background if live_detail else "") or "unknown")
     )
 
-    team_score = calculate_team_score(team_raw_score, team_background)
-    funding_score = calculate_funding_score(funding_amount, funding_date, today=today)
-    social_score = calculate_social_percentile(benchmarks, bucket, followers)
     project_name_for_matching = (
         str(getattr(args, "project_name", "") or "").strip()
         or (live_detail.project_name if live_detail and live_detail.project_name else project_row.get("project_name", ""))
@@ -204,6 +276,24 @@ def build_assessment(args: argparse.Namespace) -> dict[str, object]:
         project_name=project_name_for_matching,
         rootdata_url=args.rootdata_url,
     )
+    sector_funding_row, sector_funding_components = best_sector_funding_match(
+        matched_fundraising_rows,
+        fundraising_rows,
+        today=today,
+    )
+    if sector_funding_row:
+        row_amount = parse_float(sector_funding_row.get("amount_usd"))
+        row_date = parse_date(sector_funding_row.get("funding_date"))
+        funding_amount = row_amount or funding_amount
+        funding_date = row_date or funding_date
+
+    team_score = calculate_team_score(team_raw_score, team_background)
+    funding_score = (
+        float(sector_funding_components["score"])
+        if sector_funding_components
+        else calculate_funding_score(funding_amount, funding_date, today=today)
+    )
+    social_score = calculate_social_percentile(benchmarks, bucket, followers)
     investors, fundraising_investors_added = merge_investors(
         live_detail.investors if live_detail else [],
         fundraising_investors(matched_fundraising_rows),
@@ -225,6 +315,13 @@ def build_assessment(args: argparse.Namespace) -> dict[str, object]:
         evidence_notes.extend(live_detail.evidence_notes)
     if fundraising_investors_added:
         evidence_notes.append(f"RootData fundraising investors: {', '.join(fundraising_investors_added)}")
+    if sector_funding_row:
+        evidence_notes.append(
+            "RootData sector funding rank: "
+            f"{sector_funding_components.get('sector')} #{sector_funding_components.get('sector_rank')}, "
+            f"amount bonus {sector_funding_components.get('amount_bonus')}, "
+            f"age multiplier {sector_funding_components.get('age_multiplier')}"
+        )
 
     return {
         "assessed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -250,6 +347,11 @@ def build_assessment(args: argparse.Namespace) -> dict[str, object]:
         "funding_date": funding_date.isoformat() if funding_date else "",
         "funding_rounds": live_detail.funding_rounds if live_detail else [],
         "funding_score": funding_score,
+        "funding_sector": sector_funding_components.get("sector", "") if sector_funding_components else "",
+        "funding_sector_rank": sector_funding_components.get("sector_rank", "") if sector_funding_components else "",
+        "funding_rank_score": sector_funding_components.get("rank_score", "") if sector_funding_components else "",
+        "funding_amount_bonus": sector_funding_components.get("amount_bonus", "") if sector_funding_components else "",
+        "funding_age_multiplier": sector_funding_components.get("age_multiplier", "") if sector_funding_components else "",
         "investors": investors,
         "investor_score": investor_score,
         "social_score": social_score,
@@ -353,6 +455,11 @@ def make_score_rows(history: list[dict[str, object]]) -> list[list[object]]:
         "funding_amount_usd",
         "funding_total_usd",
         "funding_date",
+        "funding_sector",
+        "funding_sector_rank",
+        "funding_rank_score",
+        "funding_amount_bonus",
+        "funding_age_multiplier",
         "investors",
         "chains",
         "fetch_status",
@@ -449,6 +556,12 @@ def make_config_rows() -> list[list[object]]:
         ["pure_chinese_team_multiplier", 0.3],
         ["funding_full_amount_usd", 500_000_000],
         ["funding_full_recency_days", 365],
+        ["sector_funding_rank_max_score", 90],
+        ["sector_funding_amount_bonus_max", 10],
+        ["sector_funding_age_multiplier_0_365_days", 1.0],
+        ["sector_funding_age_multiplier_366_730_days", 0.85],
+        ["sector_funding_age_multiplier_731_1095_days", 0.65],
+        ["sector_funding_age_multiplier_over_1095_days", 0.45],
         ["binance_alpha_affects_pre_tge_exchange_score", "false"],
         ["yzi_labs_affects_pre_tge_exchange_score", "false"],
     ]

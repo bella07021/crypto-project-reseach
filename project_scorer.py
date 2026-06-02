@@ -16,6 +16,20 @@ WEIGHTS = {
 PURE_CHINESE_TEAM_MULTIPLIER = 0.3
 MAX_FUNDING_USD = 500_000_000
 FUNDING_RECENCY_DAYS = 365
+FUNDING_RANK_ANCHORS = [
+    (1, 90.0),
+    (10, 82.0),
+    (30, 72.0),
+    (100, 50.0),
+    (300, 25.0),
+]
+FUNDING_AMOUNT_BONUS_MAX = 10.0
+FUNDING_AGE_MULTIPLIERS = [
+    (365, 1.0),
+    (730, 0.85),
+    (1095, 0.65),
+]
+FUNDING_STALE_MULTIPLIER = 0.45
 
 TOP_INVESTOR_KEYWORDS = {
     "yzi labs",
@@ -77,6 +91,89 @@ def calculate_funding_score(
     days_since = max(0, (today - funding_date).days)
     recency_part = clamp(1 - days_since / FUNDING_RECENCY_DAYS, 0.0, 1.0) * 50
     return round(amount_part + recency_part, 2)
+
+
+def calculate_funding_rank_score(sector_rank: int | str | None) -> float:
+    if not sector_rank:
+        return 0.0
+    try:
+        rank = max(1, int(sector_rank))
+    except (TypeError, ValueError):
+        return 0.0
+
+    previous_rank, previous_score = FUNDING_RANK_ANCHORS[0]
+    if rank <= previous_rank:
+        return previous_score
+    for next_rank, next_score in FUNDING_RANK_ANCHORS[1:]:
+        if rank <= next_rank:
+            span = next_rank - previous_rank
+            progress = (rank - previous_rank) / span if span else 0
+            return round(previous_score + (next_score - previous_score) * progress, 2)
+        previous_rank, previous_score = next_rank, next_score
+    return 10.0
+
+
+def calculate_funding_amount_bonus(
+    amount_usd: float | int | str | None,
+    sector_amounts_usd: Iterable[float | int | str] | None,
+) -> float:
+    if not amount_usd or not sector_amounts_usd:
+        return 0.0
+    try:
+        amount = float(amount_usd)
+    except (TypeError, ValueError):
+        return 0.0
+    amounts = []
+    for value in sector_amounts_usd:
+        if value in {None, ""}:
+            continue
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0:
+            amounts.append(parsed)
+    amounts.sort()
+    if not amounts:
+        return 0.0
+    if len(amounts) == 1:
+        return FUNDING_AMOUNT_BONUS_MAX if amount >= amounts[0] else 0.0
+    lower_count = sum(1 for value in amounts if value < amount)
+    equal_count = sum(1 for value in amounts if value == amount)
+    midpoint_rank = lower_count + (equal_count - 1) / 2
+    percentile = midpoint_rank / (len(amounts) - 1)
+    return round(clamp(percentile, 0.0, 1.0) * FUNDING_AMOUNT_BONUS_MAX, 2)
+
+
+def calculate_funding_age_multiplier(
+    funding_date: date | None,
+    *,
+    today: date | None = None,
+) -> float:
+    if not funding_date:
+        return 1.0
+    today = today or date.today()
+    days_since = max(0, (today - funding_date).days)
+    for max_days, multiplier in FUNDING_AGE_MULTIPLIERS:
+        if days_since <= max_days:
+            return multiplier
+    return FUNDING_STALE_MULTIPLIER
+
+
+def calculate_sector_funding_score(
+    *,
+    sector_rank: int | str | None,
+    amount_usd: float | int | str | None,
+    sector_amounts_usd: Iterable[float | int | str] | None,
+    funding_date: date | None,
+    today: date | None = None,
+) -> float:
+    rank_score = calculate_funding_rank_score(sector_rank)
+    if not rank_score:
+        return 0.0
+    amount_bonus = calculate_funding_amount_bonus(amount_usd, sector_amounts_usd)
+    age_multiplier = calculate_funding_age_multiplier(funding_date, today=today)
+    return round(clamp(rank_score + amount_bonus) * age_multiplier, 2)
 
 
 def parse_followers(value: object) -> int | None:

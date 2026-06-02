@@ -13,6 +13,7 @@ from project_scorer import (
     calculate_chain_score,
     calculate_funding_score,
     calculate_investor_score,
+    calculate_sector_funding_score,
     calculate_social_percentile,
     calculate_team_score,
     calculate_total_score,
@@ -541,6 +542,16 @@ class ProjectScorerTests(unittest.TestCase):
         )
         self.assertAlmostEqual(score, 50.21, places=2)
 
+    def test_sector_funding_score_uses_rank_amount_bonus_and_age_penalty(self):
+        score = calculate_sector_funding_score(
+            sector_rank=20,
+            amount_usd=50_000_000,
+            sector_amounts_usd=[1_000_000, 10_000_000, 50_000_000, 100_000_000],
+            funding_date=date(2025, 5, 1),
+            today=date(2026, 6, 2),
+        )
+        self.assertAlmostEqual(score, 71.12, places=2)
+
     def test_social_percentile_uses_same_bucket_followers(self):
         rows = [
             {"bucket": "infra", "x_followers": "100"},
@@ -605,6 +616,9 @@ class ProjectScorerTests(unittest.TestCase):
                         "token_symbol",
                         "amount_usd",
                         "funding_date",
+                        "sector_cn",
+                        "sector_en",
+                        "sector_rank",
                         "investors",
                         "project_url",
                     ],
@@ -617,8 +631,39 @@ class ProjectScorerTests(unittest.TestCase):
                         "token_symbol": "BILL",
                         "amount_usd": "30000000",
                         "funding_date": "2025-07-30",
+                        "sector_cn": "基础设施",
+                        "sector_en": "Infra",
+                        "sector_rank": "18",
                         "investors": "Coinbase Ventures; Liberty City Ventures; Polychain",
                         "project_url": "https://cn.rootdata.com/Projects/detail/Billions?k=16544",
+                    }
+                )
+                writer.writerow(
+                    {
+                        "project_name": "Infra Peer",
+                        "project_name_en": "Infra Peer",
+                        "token_symbol": "PEER",
+                        "amount_usd": "1000000",
+                        "funding_date": "2026-01-01",
+                        "sector_cn": "基础设施",
+                        "sector_en": "Infra",
+                        "sector_rank": "50",
+                        "investors": "Example Ventures",
+                        "project_url": "https://cn.rootdata.com/Projects/detail/Infra%20Peer?k=1",
+                    }
+                )
+                writer.writerow(
+                    {
+                        "project_name": "Infra Whale",
+                        "project_name_en": "Infra Whale",
+                        "token_symbol": "WHALE",
+                        "amount_usd": "100000000",
+                        "funding_date": "2026-01-01",
+                        "sector_cn": "基础设施",
+                        "sector_en": "Infra",
+                        "sector_rank": "80",
+                        "investors": "Example Ventures",
+                        "project_url": "https://cn.rootdata.com/Projects/detail/Infra%20Whale?k=2",
                     }
                 )
             args = argparse.Namespace(
@@ -662,6 +707,11 @@ class ProjectScorerTests(unittest.TestCase):
                 assessment["investors"],
                 ["Coinbase Ventures", "Liberty City Ventures", "Polychain"],
             )
+            self.assertEqual(assessment["funding_sector"], "基础设施")
+            self.assertEqual(assessment["funding_sector_rank"], 18)
+            self.assertEqual(assessment["funding_amount_bonus"], 5.0)
+            self.assertEqual(assessment["funding_age_multiplier"], 1.0)
+            self.assertAlmostEqual(assessment["funding_score"], 83.0, places=2)
             self.assertGreater(assessment["investor_score"], 0)
             self.assertIn(
                 "RootData fundraising investors: Liberty City Ventures, Polychain",
