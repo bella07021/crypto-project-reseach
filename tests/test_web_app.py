@@ -226,6 +226,23 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(rows[0]["pre_tge_exchange_source"], "exchange_listings_db")
         self.assertEqual(rows[0]["listed_exchanges"], ["Coinbase"])
 
+    def test_dashboard_rows_backfills_investor_highlights_for_cached_scores(self):
+        rows = dashboard_rows(
+            [
+                {
+                    "assessed_at": "2026-06-02T09:44:22+00:00",
+                    "token_ticker": "BILL",
+                    "project_name": "Billions Network",
+                    "x_handle": "billions_ntwk",
+                    "rootdata_url": "https://cn.rootdata.com/projects/detail/Billions?k=M",
+                    "total_score": 91.93,
+                    "investors": ["Founders Fund*", "Delphi", "dao5", "Nick White"],
+                }
+            ]
+        )
+
+        self.assertEqual(rows[0]["assessment"]["investor_highlights"], ["Founders Fund*", "Delphi"])
+
     def test_exchange_progress_uses_quality_tiers_and_ignores_alpha(self):
         progress = exchange_progress(
             [

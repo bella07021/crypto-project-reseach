@@ -35,6 +35,7 @@ TOP_INVESTOR_KEYWORDS = {
     "yzi labs",
     "binance labs",
     "coinbase ventures",
+    "founders fund",
     "a16z",
     "andreessen horowitz",
     "paradigm",
@@ -50,6 +51,12 @@ STRONG_INVESTOR_KEYWORDS = {
     "animoca",
     "delphi",
     "iosg",
+    "maven11",
+    "maven 11",
+    "mirana",
+    "mirana ventures",
+    "galaxy",
+    "galaxy digital",
     "okx ventures",
     "hashkey",
 }
@@ -242,6 +249,30 @@ def calculate_investor_score(investors: Iterable[str] | str | None) -> float:
     if named_count:
         return 45.0
     return 0.0
+
+
+def investor_highlights(investors: Iterable[str] | str | None) -> list[str]:
+    if not investors:
+        return []
+    if isinstance(investors, str):
+        investor_values = [investors]
+    else:
+        investor_values = list(investors)
+
+    buckets: list[list[str]] = [[], []]
+    seen: set[str] = set()
+    for value in investor_values:
+        name = str(value).strip()
+        key = name.lower()
+        if not name or key in seen:
+            continue
+        if any(keyword in key for keyword in TOP_INVESTOR_KEYWORDS):
+            buckets[0].append(name)
+            seen.add(key)
+        elif any(keyword in key for keyword in STRONG_INVESTOR_KEYWORDS):
+            buckets[1].append(name)
+            seen.add(key)
+    return buckets[0] + buckets[1]
 
 
 def calculate_chain_score(chains: Iterable[str] | str | None) -> float:

@@ -21,6 +21,7 @@ from project_scorer import (
     calculate_social_percentile,
     calculate_team_score,
     calculate_total_score,
+    investor_highlights,
     parse_followers,
 )
 from live_project_fetcher import fetch_live_project_detail, normalize_rootdata_url, parse_project_chains
@@ -321,6 +322,7 @@ def build_assessment(args: argparse.Namespace) -> dict[str, object]:
     )
     chains = (live_detail.chains if live_detail else []) or benchmark_chain_tags(project_row)
     investor_score = calculate_investor_score(investors)
+    highlighted_investors = investor_highlights(investors)
     chain_score = calculate_chain_score(chains)
     pre_tge_exchange_score = 0.0
     total_score = calculate_total_score(
@@ -374,6 +376,7 @@ def build_assessment(args: argparse.Namespace) -> dict[str, object]:
         "funding_amount_bonus": sector_funding_components.get("amount_bonus", "") if sector_funding_components else "",
         "funding_age_multiplier": sector_funding_components.get("age_multiplier", "") if sector_funding_components else "",
         "investors": investors,
+        "investor_highlights": highlighted_investors,
         "investor_score": investor_score,
         "social_score": social_score,
         "chains": chains,

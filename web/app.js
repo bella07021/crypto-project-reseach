@@ -146,6 +146,15 @@ function scoreReason(kind, assessment) {
   }
   if (kind === "funding") {
     const amount = Number(assessment.funding_amount_usd || 0);
+    const base = `最新融资 $${integerText(amount)}，累计 $${integerText(assessment.funding_total_usd)}`;
+    if (assessment.funding_sector_rank) {
+      const sector = assessment.funding_sector || "赛道";
+      const rank = assessment.funding_sector_rank;
+      const rankScore = percentText(assessment.funding_rank_score);
+      const amountBonus = percentText(assessment.funding_amount_bonus);
+      const ageMultiplier = percentText(assessment.funding_age_multiplier);
+      return `${base}；${sector}融资排名 #${rank}，排名分 ${rankScore}，金额加成 ${amountBonus}，时间系数 ${ageMultiplier}`;
+    }
     const dateText = assessment.funding_date || "";
     const date = dateText ? new Date(`${dateText}T00:00:00`) : null;
     const validDate = date && !Number.isNaN(date.getTime());
@@ -153,7 +162,6 @@ function scoreReason(kind, assessment) {
     const months = days === null ? null : Math.round(days / 30);
     const amountPart = Math.min(amount / 500000000, 1) * 50;
     const recencyPart = days === null ? 0 : Math.max(0, 1 - days / 365) * 50;
-    const base = `最新融资 $${integerText(amount)}，累计 $${integerText(assessment.funding_total_usd)}`;
     if (!amount || !validDate) return `${base}；缺少金额或时间，融资分偏低`;
     if (recencyPart === 0) return `${base}；距今约 ${months} 个月，超过一年，时间项为 0，拉低得分`;
     if (amountPart >= 40 && recencyPart >= 40) return `${base}；金额接近 $500M 且一年内融资，得分高`;
@@ -161,7 +169,7 @@ function scoreReason(kind, assessment) {
     return `${base}；金额项 ${percentText(amountPart)}/50，时间项 ${percentText(recencyPart)}/50`;
   }
   if (kind === "investor") {
-    const investors = assessment.investors || [];
+    const investors = assessment.investor_highlights || [];
     return investors.length ? investors.join("、") : "暂无明确投资方信息";
   }
   if (kind === "chain") {

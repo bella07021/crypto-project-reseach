@@ -26,7 +26,7 @@ from score_project import (
     load_benchmarks,
     write_workbook,
 )
-from project_scorer import calculate_chain_score, calculate_total_score
+from project_scorer import calculate_chain_score, calculate_total_score, investor_highlights
 from exchange_listings import db as exchange_listing_db
 from exchange_listings.adapters import fetch_live_sources
 from exchange_listings.sync import run_sync
@@ -1066,6 +1066,8 @@ def has_binance_alpha_airdrop_evidence(row: dict[str, Any]) -> bool:
 
 def hydrate_cached_assessment(row: dict[str, Any]) -> dict[str, Any]:
     hydrated = dict(row)
+    if hydrated.get("investors") and not hydrated.get("investor_highlights"):
+        hydrated["investor_highlights"] = investor_highlights(hydrated.get("investors"))
     prune_foreign_project_tge_links(hydrated)
     if (
         not hydrated.get("tge_date")

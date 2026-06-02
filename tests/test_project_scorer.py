@@ -17,6 +17,7 @@ from project_scorer import (
     calculate_social_percentile,
     calculate_team_score,
     calculate_total_score,
+    investor_highlights,
 )
 from live_project_fetcher import (
     LiveProjectDetail,
@@ -578,6 +579,23 @@ class ProjectScorerTests(unittest.TestCase):
         self.assertEqual(calculate_chain_score(["Base"]), 100.0)
         self.assertEqual(calculate_chain_score(["Solana"]), 95.0)
 
+    def test_investor_highlights_only_include_top_two_quality_tiers(self):
+        investors = [
+            "Delphi",
+            "Founders Fund*",
+            "Maven11",
+            "Mirana Ventures",
+            "Galaxy*",
+            "dao5",
+            "Nick White",
+            "Nikhil Viswanathan",
+        ]
+
+        self.assertEqual(
+            investor_highlights(investors),
+            ["Founders Fund*", "Delphi", "Maven11", "Mirana Ventures", "Galaxy*"],
+        )
+
     def test_build_assessment_merges_rootdata_fundraising_investors(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -707,6 +725,7 @@ class ProjectScorerTests(unittest.TestCase):
                 assessment["investors"],
                 ["Coinbase Ventures", "Liberty City Ventures", "Polychain"],
             )
+            self.assertEqual(assessment["investor_highlights"], ["Coinbase Ventures", "Polychain"])
             self.assertEqual(assessment["funding_sector"], "基础设施")
             self.assertEqual(assessment["funding_sector_rank"], 18)
             self.assertEqual(assessment["funding_amount_bonus"], 5.0)
