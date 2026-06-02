@@ -59,7 +59,7 @@ CHAIN_SCORE_RULES = [
     (95.0, ("solana", " sol ", "sol生态")),
     (90.0, ("sui",)),
     (85.0, ("bnb chain", "bsc", "binance smart chain")),
-    (80.0, ("ethereum", "eth", "zksync", "starknet")),
+    (80.0, ("ethereum", "eth", "zksync", " zk ", "zero knowledge", "zero-knowledge", "零知识", "starknet")),
     (75.0, ("arbitrum", "optimism", "op mainnet", "polygon", "mantle", "linea", "scroll", "blast")),
     (65.0, ("avalanche", "avax", "aptos", "sei", "near", "cosmos", "ton")),
 ]

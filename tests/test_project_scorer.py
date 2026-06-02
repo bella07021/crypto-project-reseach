@@ -718,6 +718,88 @@ class ProjectScorerTests(unittest.TestCase):
                 assessment["evidence_notes"],
             )
 
+    def test_build_assessment_uses_deployable_fundraising_snapshot_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            benchmark = tmp_path / "benchmark.csv"
+            fundraising = tmp_path / "data_fundraising.csv"
+            workbook = tmp_path / "scores.xlsx"
+            benchmark.write_text(
+                "bucket,project_name,token_symbol,project_url,x_handle,x_followers\n"
+                "infra,Billions,BILL,https://cn.rootdata.com/Projects/detail/Billions?k=MTY1NDQ%3D,billions_ntwk,524834\n",
+                encoding="utf-8",
+            )
+            fundraising.write_text(
+                "project_name,project_name_en,token_symbol,amount_usd,funding_date,sector_cn,sector_en,sector_rank,investors,project_url\n"
+                "Billions,Billions,BILL,30000000,2025-07-30,DID,DID,5,Coinbase Ventures; Polychain,https://cn.rootdata.com/Projects/detail/Billions?k=16544\n",
+                encoding="utf-8",
+            )
+            args = argparse.Namespace(
+                x_handle="billions_ntwk",
+                rootdata_url="https://cn.rootdata.com/projects/detail/Billions?k=M",
+                token_ticker="BILL",
+                project_name="Billions Network",
+                team_raw_score=85,
+                team_background="international",
+                funding_amount_usd=30_000_000,
+                funding_date="2025-07-30",
+                bucket="infra",
+                tge_signal=[],
+                listing_signal=[],
+                evidence_note=[],
+                benchmark_csv=benchmark,
+                workbook=workbook,
+                today="2026-06-02",
+                no_live=True,
+                rootdata_html="",
+            )
+
+            with patch("score_project.DEFAULT_FUNDRAISING_CSV", tmp_path / "missing.csv"), patch(
+                "score_project.TRACKED_FUNDRAISING_CSV", fundraising, create=True
+            ):
+                assessment = build_assessment(args)
+
+            self.assertEqual(assessment["funding_sector"], "DID")
+            self.assertEqual(assessment["funding_sector_rank"], 5)
+            self.assertGreater(assessment["funding_score"], 90)
+            self.assertEqual(assessment["investor_score"], 100.0)
+
+    def test_build_assessment_uses_benchmark_ecosystem_tags_for_chain_score(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            benchmark = tmp_path / "benchmark.csv"
+            workbook = tmp_path / "scores.xlsx"
+            benchmark.write_text(
+                "bucket,project_name,token_symbol,rootdata_subtags,ecosystem,description,project_url,x_handle,x_followers\n"
+                "infra,Billions,BILL,基础设施、zk、AI、DID、隐私,--,数字身份验证平台,https://cn.rootdata.com/Projects/detail/Billions?k=MTY1NDQ%3D,billions_ntwk,524834\n",
+                encoding="utf-8",
+            )
+            args = argparse.Namespace(
+                x_handle="billions_ntwk",
+                rootdata_url="https://cn.rootdata.com/projects/detail/Billions?k=M",
+                token_ticker="BILL",
+                project_name="Billions Network",
+                team_raw_score=85,
+                team_background="international",
+                funding_amount_usd=30_000_000,
+                funding_date="2025-07-30",
+                bucket="infra",
+                tge_signal=[],
+                listing_signal=[],
+                evidence_note=[],
+                benchmark_csv=benchmark,
+                fundraising_csv=tmp_path / "missing_fundraising.csv",
+                workbook=workbook,
+                today="2026-06-02",
+                no_live=True,
+                rootdata_html="",
+            )
+
+            assessment = build_assessment(args)
+
+            self.assertEqual(assessment["chains"], ["ZK"])
+            self.assertEqual(assessment["chain_score"], 80.0)
+
     def test_cli_writes_workbook_and_prints_json(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

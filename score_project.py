@@ -23,11 +23,12 @@ from project_scorer import (
     calculate_total_score,
     parse_followers,
 )
-from live_project_fetcher import fetch_live_project_detail, normalize_rootdata_url
+from live_project_fetcher import fetch_live_project_detail, normalize_rootdata_url, parse_project_chains
 
 
 DEFAULT_BENCHMARK_CSV = Path("output/rootdata_projects_x_enriched_fullv2.csv")
 DEFAULT_FUNDRAISING_CSV = Path("output/rootdata_fundraising/rootdata_fundraising_by_sector.csv")
+TRACKED_FUNDRAISING_CSV = Path("data/rootdata_fundraising_by_sector.csv")
 DEFAULT_WORKBOOK = Path("output/crypto_project_scores.xlsx")
 
 
@@ -58,6 +59,15 @@ def load_benchmarks(path: Path) -> list[dict[str, str]]:
         return []
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         return list(csv.DictReader(handle))
+
+
+def fundraising_csv_path(args: argparse.Namespace) -> Path:
+    explicit = getattr(args, "fundraising_csv", None)
+    if explicit:
+        return Path(explicit)
+    if DEFAULT_FUNDRAISING_CSV.exists():
+        return DEFAULT_FUNDRAISING_CSV
+    return TRACKED_FUNDRAISING_CSV
 
 
 def normalize_handle(handle: str) -> str:
@@ -157,6 +167,17 @@ def fundraising_investors(rows: Iterable[dict[str, str]]) -> list[str]:
     return investors
 
 
+def benchmark_chain_tags(project_row: dict[str, str]) -> list[str]:
+    if not project_row:
+        return []
+    values = [
+        project_row.get("rootdata_subtags", ""),
+        project_row.get("ecosystem", ""),
+        project_row.get("description", ""),
+    ]
+    return parse_project_chains([], " ".join(value for value in values if value and value != "--"))
+
+
 def same_fundraising_sector(left: dict[str, str], right: dict[str, str]) -> bool:
     for key in ("sector_id", "sector_cn", "sector_en"):
         left_value = str(left.get(key, "")).strip().lower()
@@ -234,7 +255,7 @@ def merge_investors(primary: Iterable[str], fallback: Iterable[str]) -> tuple[li
 def build_assessment(args: argparse.Namespace) -> dict[str, object]:
     benchmarks = load_benchmarks(args.benchmark_csv)
     project_row = find_project_row(benchmarks, args.x_handle, args.rootdata_url) or {}
-    fundraising_rows = load_benchmarks(getattr(args, "fundraising_csv", DEFAULT_FUNDRAISING_CSV))
+    fundraising_rows = load_benchmarks(fundraising_csv_path(args))
     live_detail = (
         None
         if args.no_live
@@ -298,7 +319,7 @@ def build_assessment(args: argparse.Namespace) -> dict[str, object]:
         live_detail.investors if live_detail else [],
         fundraising_investors(matched_fundraising_rows),
     )
-    chains = live_detail.chains if live_detail else []
+    chains = (live_detail.chains if live_detail else []) or benchmark_chain_tags(project_row)
     investor_score = calculate_investor_score(investors)
     chain_score = calculate_chain_score(chains)
     pre_tge_exchange_score = 0.0

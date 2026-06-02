@@ -310,6 +310,7 @@ def parse_project_chains(values: list[str], text: str) -> list[str]:
         ("Sui", r"(?<![a-z0-9])sui(?![a-z0-9])|sui生态"),
         ("BNB Chain", r"bnb chain|binance smart chain|(?<![a-z0-9])bsc(?![a-z0-9])"),
         ("Ethereum", r"(?<![a-z0-9])ethereum(?![a-z0-9])|(?<![a-z0-9])eth(?![a-z0-9])"),
+        ("ZK", r"(?<![a-z0-9])zk(?![a-z0-9])|zero[- ]knowledge|零知识"),
         ("Arbitrum", r"arbitrum"),
         ("Optimism", r"optimism|op mainnet"),
         ("Polygon", r"polygon"),
