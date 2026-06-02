@@ -35,6 +35,7 @@ def fetch_live_sources(
     months=3,
     limit=5,
     fetch_text=None,
+    fetch_browser_text=None,
     now: datetime | None = None,
     max_pages=3,
 ) -> list[dict]:
@@ -42,7 +43,7 @@ def fetch_live_sources(
     fetch = fetch_text or _fetch_text
     exchange = exchange.lower()
     cutoff = _lookback_cutoff(months, now)
-    browser_fetch = fetch_text or _fetch_browser_text
+    browser_fetch = fetch_browser_text or fetch_text or _fetch_browser_text
     if exchange == "binance":
         sources = _fetch_paginated(fetch, _binance_url, parse_binance_sources, limit=limit, max_pages=max_pages, cutoff=cutoff)
         return _filter_recent_sources(sources, cutoff, limit)
@@ -50,7 +51,15 @@ def fetch_live_sources(
         sources = _fetch_paginated(fetch, _okx_url, parse_okx_sources, limit=limit, max_pages=max_pages, cutoff=cutoff)
         return _filter_recent_sources(sources, cutoff, limit)
     if exchange == "bybit":
-        sources = _fetch_paginated(fetch, _bybit_url, parse_bybit_sources, limit=limit, max_pages=max_pages, cutoff=cutoff)
+        sources = _fetch_with_browser_fallback(
+            fetch,
+            browser_fetch,
+            _bybit_url,
+            parse_bybit_sources,
+            limit=limit,
+            max_pages=max_pages,
+            cutoff=cutoff,
+        )
         return _filter_recent_sources(sources, cutoff, limit)
     if exchange == "kucoin":
         sources = _fetch_paginated(fetch, _kucoin_url, parse_kucoin_sources, limit=limit, max_pages=max_pages, cutoff=cutoff)
@@ -467,6 +476,15 @@ def _fetch_paginated(fetch, url_for_page, parser, *, limit: int, max_pages: int,
             if len(sources) >= limit:
                 return sources
     return sources
+
+
+def _fetch_with_browser_fallback(fetch, browser_fetch, url_for_page, parser, *, limit: int, max_pages: int, cutoff: datetime | None = None) -> list[dict]:
+    try:
+        return _fetch_paginated(fetch, url_for_page, parser, limit=limit, max_pages=max_pages, cutoff=cutoff)
+    except Exception:
+        if browser_fetch is fetch:
+            raise
+        return _fetch_paginated(browser_fetch, url_for_page, parser, limit=limit, max_pages=max_pages, cutoff=cutoff)
 
 
 def _page_is_older_than_cutoff(sources: list[dict], cutoff: datetime | None) -> bool:

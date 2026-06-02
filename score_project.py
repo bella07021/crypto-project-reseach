@@ -12,6 +12,8 @@ from xml.sax.saxutils import escape
 from project_scorer import (
     WEIGHTS,
     calculate_funding_score,
+    calculate_chain_score,
+    calculate_investor_score,
     calculate_social_percentile,
     calculate_team_score,
     calculate_total_score,
@@ -107,7 +109,19 @@ def build_assessment(args: argparse.Namespace) -> dict[str, object]:
     team_score = calculate_team_score(team_raw_score, team_background)
     funding_score = calculate_funding_score(funding_amount, funding_date, today=today)
     social_score = calculate_social_percentile(benchmarks, bucket, followers)
-    total_score = calculate_total_score(team_score, funding_score, social_score)
+    investors = live_detail.investors if live_detail else []
+    chains = live_detail.chains if live_detail else []
+    investor_score = calculate_investor_score(investors)
+    chain_score = calculate_chain_score(chains)
+    pre_tge_exchange_score = 0.0
+    total_score = calculate_total_score(
+        team_score,
+        funding_score,
+        social_score,
+        investor_score,
+        chain_score,
+        pre_tge_exchange_score,
+    )
     evidence_notes = list(args.evidence_note)
     if live_detail:
         evidence_notes.extend(live_detail.evidence_notes)
@@ -138,7 +152,12 @@ def build_assessment(args: argparse.Namespace) -> dict[str, object]:
         "funding_date": funding_date.isoformat() if funding_date else "",
         "funding_rounds": live_detail.funding_rounds if live_detail else [],
         "funding_score": funding_score,
+        "investors": investors,
+        "investor_score": investor_score,
         "social_score": social_score,
+        "chains": chains,
+        "chain_score": chain_score,
+        "pre_tge_exchange_score": pre_tge_exchange_score,
         "total_score": total_score,
         "tge_signals": args.tge_signal,
         "listing_signals": args.listing_signal,
@@ -227,12 +246,17 @@ def make_score_rows(history: list[dict[str, object]]) -> list[list[object]]:
         "x_followers",
         "team_score",
         "funding_score",
+        "investor_score",
         "social_score",
+        "chain_score",
+        "pre_tge_exchange_score",
         "total_score",
         "team_background",
         "funding_amount_usd",
         "funding_total_usd",
         "funding_date",
+        "investors",
+        "chains",
         "fetch_status",
         "website",
         "location",
@@ -243,7 +267,13 @@ def make_score_rows(history: list[dict[str, object]]) -> list[list[object]]:
         key = normalize_rootdata_url(str(row.get("rootdata_url", ""))) or normalize_handle(str(row.get("x_handle", "")))
         latest_by_project[key] = row
     latest_rows = sorted(latest_by_project.values(), key=lambda row: str(row.get("assessed_at", "")), reverse=True)
-    return [headers] + [[row.get(header, "") for header in headers] for row in latest_rows]
+    return [headers] + [
+        [
+            " | ".join(row.get(header, [])) if header in {"investors", "chains"} and isinstance(row.get(header), list) else row.get(header, "")
+            for header in headers
+        ]
+        for row in latest_rows
+    ]
 
 
 def make_evidence_rows(history: list[dict[str, object]]) -> list[list[object]]:
@@ -314,11 +344,15 @@ def make_config_rows() -> list[list[object]]:
         ["key", "value"],
         ["team_weight", WEIGHTS["team"]],
         ["funding_weight", WEIGHTS["funding"]],
+        ["investor_weight", WEIGHTS["investor"]],
         ["social_weight", WEIGHTS["social"]],
+        ["chain_weight", WEIGHTS["chain"]],
+        ["pre_tge_exchange_weight", WEIGHTS["pre_tge_exchange"]],
         ["pure_chinese_team_multiplier", 0.3],
         ["funding_full_amount_usd", 500_000_000],
         ["funding_full_recency_days", 365],
-        ["tge_signals_affect_total_score", "false"],
+        ["binance_alpha_affects_pre_tge_exchange_score", "false"],
+        ["yzi_labs_affects_pre_tge_exchange_score", "false"],
     ]
 
 

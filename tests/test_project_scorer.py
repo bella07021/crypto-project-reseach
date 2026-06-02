@@ -9,7 +9,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from project_scorer import (
+    calculate_chain_score,
     calculate_funding_score,
+    calculate_investor_score,
     calculate_social_percentile,
     calculate_team_score,
     calculate_total_score,
@@ -45,10 +47,10 @@ class ProjectScorerTests(unittest.TestCase):
         <p>Massively-parallelized proof mining network</p>
         <a href="https://www.nexus.xyz/">nexus.xyz</a>
         <a href="https://x.com/nexuslabs">X</a>
-        <span>Tags</span><span>Infra</span><span>zk</span>
+        <span>Tags</span><span>Infra</span><span>zk</span><span>Base</span>
         <span>Founded</span><span>2022</span>
         <span>Location</span><span>United States</span>
-        <script>self.__next_f.push([1,"\\"milestones\\":[{\\"facAmountUs\\":2200000,\\"facDate\\":\\"2022-12-01 00:00:00\\",\\"roundsName\\":{\\"en_value\\":\\"Seed\\",\\"cn_value\\":\\"种子轮\\"},\\"desc\\":{\\"en_value\\":\\"Nexus raised $ 2.2 M in Seed round\\"}},{\\"facAmountUs\\":25000000,\\"facDate\\":\\"2024-06-10 00:00:00\\",\\"roundsName\\":{\\"en_value\\":\\"Series A\\",\\"cn_value\\":\\"A轮\\"},\\"desc\\":{\\"en_value\\":\\"Nexus raised $ 25 M in Series A round\\"}}]"])</script>
+        <script>self.__next_f.push([1,"\\"milestones\\":[{\\"facAmountUs\\":2200000,\\"facDate\\":\\"2022-12-01 00:00:00\\",\\"roundsName\\":{\\"en_value\\":\\"Seed\\",\\"cn_value\\":\\"种子轮\\"},\\"desc\\":{\\"en_value\\":\\"Nexus raised $ 2.2 M in Seed round led by YZi Labs\\"}},{\\"facAmountUs\\":25000000,\\"facDate\\":\\"2024-06-10 00:00:00\\",\\"roundsName\\":{\\"en_value\\":\\"Series A\\",\\"cn_value\\":\\"A轮\\"},\\"desc\\":{\\"en_value\\":\\"Nexus raised $ 25 M in Series A round with Coinbase Ventures\\"}}]"])</script>
         <script>self.__next_f.push([1,"\\"hapDate\\":\\"2026-05-20 00:00:00\\",\\"oName\\":{\\"en_value\\":\\"Coinbase listed Nexus（NEX）\\",\\"cn_value\\":\\"Coinbase 上线 Nexus（NEX）\\"},\\"siteUrl\\":\\"https://x.com/CoinbaseMarkets/status/2057085756120748167\\",\\"type\\":15"])</script>
         <script>self.__next_f.push([1,"\\"hapDate\\":\\"2026-05-20 00:00:00\\",\\"oName\\":{\\"en_value\\":\\"NEX is live for trading\\",\\"cn_value\\":\\"NEX 代币正式上线\\"},\\"siteUrl\\":\\"https://x.com/nexuslabs/status/2057000000000000000\\",\\"type\\":1"])</script>
         <div>Jun 10, 2024</div><span>Nexus raised $ 25 M in Series A round</span>
@@ -69,6 +71,8 @@ class ProjectScorerTests(unittest.TestCase):
         self.assertEqual(detail.funding_rounds[1]["round"], "Series A")
         self.assertEqual(detail.funding_rounds[1]["amount_usd"], 25_000_000)
         self.assertEqual(detail.funding_total_usd, 27_200_000)
+        self.assertEqual(detail.investors, ["Coinbase Ventures", "YZi Labs"])
+        self.assertIn("Base", detail.chains)
         self.assertEqual(detail.tge_status, "已 TGE")
         self.assertEqual(detail.tge_probability, 100)
         self.assertEqual(str(detail.tge_date), "2026-05-20")
@@ -544,9 +548,22 @@ class ProjectScorerTests(unittest.TestCase):
         ]
         self.assertEqual(calculate_social_percentile(rows, "infra", 300), 50.0)
 
-    def test_tge_signals_do_not_affect_total_score(self):
-        total = calculate_total_score(team_score=80, funding_score=70, social_score=60)
-        self.assertEqual(total, 70.0)
+    def test_new_total_score_uses_investor_chain_and_pre_tge_exchange_components(self):
+        total = calculate_total_score(
+            team_score=80,
+            funding_score=70,
+            social_score=60,
+            investor_score=90,
+            chain_score=100,
+            pre_tge_exchange_score=95,
+        )
+        self.assertEqual(total, 78.75)
+
+    def test_investor_and_chain_scores_prioritize_approved_signals(self):
+        self.assertEqual(calculate_investor_score(["YZi Labs"]), 90.0)
+        self.assertEqual(calculate_investor_score(["YZi Labs", "Coinbase Ventures"]), 100.0)
+        self.assertEqual(calculate_chain_score(["Base"]), 100.0)
+        self.assertEqual(calculate_chain_score(["Solana"]), 95.0)
 
     def test_cli_writes_workbook_and_prints_json(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -26,6 +26,17 @@ function percentText(value) {
   return Number(value).toFixed(2).replace(/\.00$/, "");
 }
 
+function scoreRing(value, label = "基本面总分") {
+  const score = Number(value || 0);
+  const progress = Math.max(0, Math.min(100, score));
+  return `
+    <div class="score-ring-wrap" aria-label="${label} ${numberText(score)} / 100">
+      <span class="score-ring" style="--score: ${progress}%;"></span>
+      <strong>${numberText(score)}</strong>
+    </div>
+  `;
+}
+
 function tokenLabel(assessment) {
   return assessment.token_ticker || assessment.project_name || assessment.x_handle || "--";
 }
@@ -142,6 +153,21 @@ function scoreReason(kind, assessment) {
     if (recencyPart >= 35) return `${base}；融资较新，但金额距离 $500M 仍有差距`;
     return `${base}；金额项 ${percentText(amountPart)}/50，时间项 ${percentText(recencyPart)}/50`;
   }
+  if (kind === "investor") {
+    const investors = assessment.investors || [];
+    return investors.length ? investors.join("、") : "暂无明确投资方信息";
+  }
+  if (kind === "chain") {
+    const chains = assessment.chains || [];
+    return chains.length ? chains.join("、") : "暂无明确链生态信息";
+  }
+  if (kind === "exchange") {
+    const signals = assessment.pre_tge_listing_signals || [];
+    if (!signals.length) return "暂无 exchange listings 预上线信号";
+    return signals
+      .map((item) => item.exchange || "--")
+      .join("、");
+  }
   const percentile = Number(assessment.social_score || 0);
   const topRank = percentile > 0 ? Math.max(0.01, 100 - percentile) : 100;
   return `${integerText(assessment.x_followers)} followers，同赛道约前 ${percentText(topRank)}%`;
@@ -230,6 +256,24 @@ function cmcListedExchanges(assessment) {
   return assessment.listed_exchanges || [];
 }
 
+function exchangeListingDetails(assessment) {
+  const details = assessment.exchange_listing_details || [];
+  if (details.length) return details;
+  return cmcListedExchanges(assessment).map((exchange) => ({
+    exchange,
+    listed_at: "",
+    days_after_tge: null,
+  }));
+}
+
+function exchangeTimeText(item) {
+  if (!item.listed_at) return "时间待确认";
+  const dayText = item.days_after_tge === undefined || item.days_after_tge === null
+    ? ""
+    : ` · TGE 后 ${item.days_after_tge} 天`;
+  return `${item.listed_at}${dayText}`;
+}
+
 function visibleTgeMethod(assessment) {
   if (assessment.tge_status !== "已 TGE") return "";
   const method = String(assessment.tge_method || "").trim();
@@ -238,7 +282,7 @@ function visibleTgeMethod(assessment) {
 }
 
 function renderRoadmap(el, assessment) {
-  const exchanges = cmcListedExchanges(assessment);
+  const exchanges = exchangeListingDetails(assessment);
   el.innerHTML = "";
   if (!exchanges.length) {
     el.innerHTML = '<div class="empty-state">暂无 CMC 上线交易所数据。</div>';
@@ -246,9 +290,10 @@ function renderRoadmap(el, assessment) {
   }
   for (const exchange of exchanges) {
     const item = document.createElement("div");
-    item.className = "timeline-item";
+    item.className = "timeline-item exchange-timeline-item";
     item.innerHTML = `
-      <div class="timeline-name">${exchange}</div>
+      <div class="timeline-name">${exchange.exchange}</div>
+      <div class="timeline-meta">${exchangeTimeText(exchange)}</div>
     `;
     el.appendChild(item);
   }
@@ -264,12 +309,19 @@ function renderReport(assessment, workbook) {
   get("tokenTicker").textContent = tokenLabel(assessment);
   get("projectMeta").textContent = `${assessment.project_name || "--"} · @${assessment.x_handle || "--"} · ${assessment.bucket || "unknown"} · ${assessment.website || "no website"}`;
   get("totalScore").textContent = numberText(assessment.total_score);
+  get("totalScore").parentElement.style.setProperty("--score", `${Math.max(0, Math.min(100, Number(assessment.total_score || 0)))}%`);
   get("teamScore").textContent = numberText(assessment.team_score);
   get("fundingScore").textContent = numberText(assessment.funding_score);
+  get("investorScore").textContent = numberText(assessment.investor_score);
   get("socialScore").textContent = numberText(assessment.social_score);
+  get("chainScore").textContent = numberText(assessment.chain_score);
+  get("preTgeExchangeScore").textContent = numberText(assessment.pre_tge_exchange_score || assessment.exchange_score);
   get("teamReason").textContent = scoreReason("team", assessment);
   get("fundingReason").textContent = scoreReason("funding", assessment);
+  get("investorReason").textContent = scoreReason("investor", assessment);
   get("socialReason").textContent = scoreReason("social", assessment);
+  get("chainReason").textContent = scoreReason("chain", assessment);
+  get("exchangeReason").textContent = scoreReason("exchange", assessment);
   get("fetchStatus").textContent = assessment.fetch_status || "unknown";
   get("tgeStatus").textContent = assessment.tge_status || "--";
   get("tgeProbability").textContent = assessment.tge_status === "已 TGE" ? "已 TGE" : "未 TGE";
@@ -362,26 +414,33 @@ function syncActiveRequestWithDashboard() {
   }
 }
 
-function roadmapSummary(row) {
-  const exchanges = cmcListedExchanges(row);
-  const hasCmcData = exchanges.length > 0;
-  const score = hasCmcData ? Number(row.exchange_score || 0) : 0;
-  const progress = hasCmcData ? Math.max(0, Math.min(100, Number(row.exchange_progress || 0))) : 0;
-  const chips = exchanges.length
-    ? exchanges.map((exchange) => `<span>${exchange}</span>`).join("")
-    : "<span>暂无 CMC 上线交易所</span>";
+function scoreBreakdown(row) {
+  const items = [
+    ["团队", row.team_score],
+    ["融资", row.funding_score],
+    ["投资方", row.investor_score],
+    ["社媒", row.social_score],
+    ["链生态", row.chain_score],
+    ["TGE前交易所", row.pre_tge_exchange_score],
+  ];
   return `
-    <div class="exchange-progress">
-      <div class="progress-head">
-        <strong>${numberText(score)}</strong>
-        <em>/ 100</em>
-      </div>
-      <div class="progress-track" aria-label="交易所进度 ${numberText(score)} / 100">
-        <div style="width: ${progress}%"></div>
-      </div>
-      <div class="exchange-chips">${chips}</div>
+    <div class="score-breakdown" aria-label="基本面拆分">
+      ${items.map(([label, value]) => `
+        <div>
+          <span>${label}</span>
+          <strong>${numberText(value)}</strong>
+        </div>
+      `).join("")}
     </div>
   `;
+}
+
+function listedExchangeSummary(row) {
+  const exchanges = exchangeListingDetails(row);
+  const chips = exchanges.length
+    ? exchanges.map((item) => `<span>${item.exchange || "--"}</span>`).join("")
+    : "<span>暂无上线数据</span>";
+  return `<div class="exchange-chips exchange-chips-compact">${chips}</div>`;
 }
 
 function tgeSummary(row) {
@@ -397,7 +456,7 @@ function tgeSummary(row) {
 function renderDashboard() {
   dashboardBody.innerHTML = "";
   if (!state.dashboardRows.length) {
-    dashboardBody.innerHTML = '<tr><td colspan="8">暂无项目。</td></tr>';
+    dashboardBody.innerHTML = '<tr><td colspan="6">暂无项目。</td></tr>';
     return;
   }
   for (const row of state.dashboardRows) {
@@ -405,12 +464,10 @@ function renderDashboard() {
     tr.innerHTML = `
       <td><button type="button" class="ticker-link">${row.token_ticker || "--"}</button></td>
       <td>${row.project_name || "--"}</td>
-      <td>${numberText(row.total_score)}</td>
-      <td>${numberText(row.team_score)}</td>
-      <td>${numberText(row.funding_score)}</td>
-      <td>${numberText(row.social_score)}</td>
+      <td>${scoreRing(row.total_score)}</td>
+      <td>${scoreBreakdown(row)}</td>
       <td>${tgeSummary(row)}</td>
-      <td>${roadmapSummary(row)}</td>
+      <td>${listedExchangeSummary(row)}</td>
     `;
     tr.querySelector(".ticker-link").addEventListener("click", () => {
       switchView("add");

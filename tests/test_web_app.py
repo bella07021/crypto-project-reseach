@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from exchange_listings import db as exchange_listing_db
 from web_app import (
     append_github_history,
     combined_dashboard_rows,
@@ -13,9 +14,12 @@ from web_app import (
     request_status_payload,
     request_dashboard_rows,
     exchange_progress,
+    exchange_listing_details,
     exchange_progress_from_cmc,
+    pre_tge_exchange_progress_from_db,
     apply_icodrops_tge_signal,
     project_exchange_progress,
+    apply_cmc_chain_override,
     parse_score_payload,
     score_payload,
     handle_post_api,
@@ -173,47 +177,75 @@ class WebAppTests(unittest.TestCase):
             json.loads(json.dumps(result))
 
     def test_dashboard_rows_keep_latest_per_project(self):
-        rows = dashboard_rows(
-            [
-                {
-                    "assessed_at": "2026-05-22T01:00:00Z",
-                    "token_ticker": "NEX",
-                    "rootdata_url": "https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D",
-                    "total_score": 0,
-                },
-                {
-                    "assessed_at": "2026-05-22T02:00:00Z",
-                    "token_ticker": "NEX",
-                    "rootdata_url": "https://www.rootdata.com/Projects/detail/Nexus?k=MTE3NDI%3D",
-                    "total_score": 48.02,
-                    "team_score": 85,
-                    "funding_score": 2.5,
-                    "social_score": 71.73,
-                    "tge_status": "已 TGE",
-                    "roadmap_events": [{"type": "Coinbase", "date": "2026-05-20"}],
-                },
-            ]
-        )
+        with patch(
+            "web_app.pre_tge_exchange_progress_from_db",
+            return_value={
+                "pre_tge_exchange_score": 10.0,
+                "pre_tge_exchange_source": "exchange_listings_db",
+                "pre_tge_listing_signals": [],
+            },
+        ):
+            rows = dashboard_rows(
+                [
+                    {
+                        "assessed_at": "2026-05-22T01:00:00Z",
+                        "token_ticker": "NEX",
+                        "rootdata_url": "https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D",
+                        "total_score": 0,
+                    },
+                    {
+                        "assessed_at": "2026-05-22T02:00:00Z",
+                        "token_ticker": "NEX",
+                        "rootdata_url": "https://www.rootdata.com/Projects/detail/Nexus?k=MTE3NDI%3D",
+                        "total_score": 48.02,
+                        "team_score": 85,
+                        "funding_score": 2.5,
+                        "social_score": 71.73,
+                        "tge_status": "已 TGE",
+                        "roadmap_events": [{"type": "Coinbase", "date": "2026-05-20"}],
+                    },
+                ]
+            )
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["token_ticker"], "NEX")
-        self.assertEqual(rows[0]["total_score"], 48.02)
-        self.assertEqual(rows[0]["exchange_score"], 26.67)
-        self.assertEqual(rows[0]["exchange_raw_score"], 8.0)
+        self.assertEqual(rows[0]["total_score"], 37.6)
+        self.assertEqual(rows[0]["exchange_score"], 95.0)
+        self.assertEqual(rows[0]["exchange_raw_score"], 95.0)
+        self.assertEqual(rows[0]["pre_tge_exchange_score"], 10.0)
+        self.assertEqual(rows[0]["pre_tge_exchange_source"], "exchange_listings_db")
         self.assertEqual(rows[0]["listed_exchanges"], ["Coinbase"])
 
-    def test_exchange_progress_sums_matching_exchange_scores(self):
+    def test_exchange_progress_uses_quality_tiers_and_ignores_alpha(self):
         progress = exchange_progress(
             [
                 {"type": "Coinbase", "name": "Coinbase listed Demo"},
                 {"type": "Binance 合约", "name": "Binance Futures will launch Demo perpetual"},
+                {"type": "Binance Alpha", "name": "Binance Alpha Airdrop"},
                 {"type": "TGE", "name": "Demo is live for trading"},
             ]
         )
 
-        self.assertEqual(progress["exchange_raw_score"], 13.0)
-        self.assertEqual(progress["exchange_score"], 43.33)
-        self.assertEqual(progress["exchange_progress"], 43.33)
+        self.assertEqual(progress["exchange_raw_score"], 95.0)
+        self.assertEqual(progress["exchange_score"], 95.0)
+        self.assertEqual(progress["exchange_progress"], 95.0)
         self.assertEqual(progress["listed_exchanges"], ["Coinbase", "BN 合约"])
+
+    def test_exchange_listing_details_attach_timing_from_roadmap_events(self):
+        details = exchange_listing_details(
+            {
+                "listed_exchanges": ["Upbit 韩元现货", "Bithumb 韩元现货", "Bitget", "Gate", "MEXC"],
+                "roadmap_events": [
+                    {"type": "TGE", "date": "2026-05-20"},
+                    {"type": "韩所", "name": "Upbit listed Demo", "date": "2026-05-22", "days_after_tge": 2},
+                    {"type": "Gate", "name": "Gate listed Demo", "date": "2026-05-24"},
+                ],
+            }
+        )
+
+        self.assertEqual(details[0], {"exchange": "Upbit 韩元现货", "listed_at": "2026-05-22", "days_after_tge": 2})
+        self.assertEqual(details[1], {"exchange": "Bithumb 韩元现货", "listed_at": "", "days_after_tge": None})
+        self.assertEqual(details[2], {"exchange": "Bitget", "listed_at": "", "days_after_tge": None})
+        self.assertEqual(details[3], {"exchange": "Gate", "listed_at": "2026-05-24", "days_after_tge": 4})
 
     def test_exchange_progress_from_cmc_pairs_uses_cmc_exchange_names(self):
         progress = exchange_progress_from_cmc(
@@ -253,9 +285,51 @@ class WebAppTests(unittest.TestCase):
         )
 
         self.assertEqual(progress["exchange_source"], "CoinMarketCap Web")
-        self.assertEqual(progress["exchange_raw_score"], 30.0)
-        self.assertEqual(progress["exchange_score"], 100.0)
-        self.assertEqual(progress["listed_exchanges"], ["BN 现货", "Coinbase", "Upbit 韩元现货", "KuCoin", "Bybit"])
+        self.assertEqual(progress["exchange_raw_score"], 95.0)
+        self.assertEqual(progress["exchange_score"], 95.0)
+        self.assertEqual(progress["listed_exchanges"], ["Coinbase", "Upbit 韩元现货", "BN 现货", "Bybit", "KuCoin"])
+
+    def test_pre_tge_exchange_progress_reads_exchange_listing_database(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "exchange_listings.sqlite"
+            exchange_listing_db.init_db(db_path)
+            with exchange_listing_db.connect(db_path) as conn:
+                asset_id = exchange_listing_db.upsert_normalized_asset(
+                    conn,
+                    {
+                        "symbol": "NEX",
+                        "project_name": "Nexus",
+                        "identity_confidence": "high",
+                    },
+                )
+                exchange_listing_db.upsert_listing_event(
+                    conn,
+                    {
+                        "exchange": "coinbase",
+                        "normalized_asset_id": asset_id,
+                        "project_name": "Nexus",
+                        "token_symbol": "NEX",
+                        "listing_type": "spot",
+                        "event_family": "spot_listing",
+                        "event_kind": "roadmap",
+                        "status": "TBD",
+                        "announcement_url": "https://x.com/CoinbaseMarkets/status/1",
+                        "announcement_title": "Coinbase roadmap: Nexus (NEX)",
+                        "announcement_published_at": "2026-05-28T00:00:00Z",
+                        "source_type": "official_x",
+                        "source_precedence": 10,
+                    },
+                )
+
+            progress = pre_tge_exchange_progress_from_db(
+                {"token_ticker": "NEX", "project_name": "Nexus"},
+                db_path,
+            )
+
+        self.assertEqual(progress["pre_tge_exchange_source"], "exchange_listings_db")
+        self.assertEqual(progress["pre_tge_exchange_score"], 95.0)
+        self.assertEqual(progress["pre_tge_listing_signals"][0]["exchange"], "Coinbase")
+        self.assertEqual(progress["pre_tge_listing_signals"][0]["announcement_title"], "Coinbase roadmap: Nexus (NEX)")
 
     def test_mainstream_spot_exchange_tier_scores_once(self):
         progress = exchange_progress_from_cmc(
@@ -268,9 +342,9 @@ class WebAppTests(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(progress["exchange_raw_score"], 12.5)
-        self.assertEqual(progress["exchange_score"], 41.67)
-        self.assertEqual(progress["listed_exchanges"], ["Coinbase", "Bitget", "KuCoin", "MEXC", "Kraken"])
+        self.assertEqual(progress["exchange_raw_score"], 95.0)
+        self.assertEqual(progress["exchange_score"], 95.0)
+        self.assertEqual(progress["listed_exchanges"], ["Coinbase", "Kraken", "Bitget", "KuCoin", "MEXC"])
 
     def test_project_exchange_progress_does_not_filter_cmc_by_project_name_when_ticker_missing(self):
         captured = {}
@@ -289,9 +363,34 @@ class WebAppTests(unittest.TestCase):
 
         self.assertEqual(captured["project_name"], "Solstice")
         self.assertEqual(captured["token_ticker"], "")
-        self.assertEqual(progress["exchange_raw_score"], 4.5)
-        self.assertEqual(progress["exchange_score"], 15.0)
+        self.assertEqual(progress["exchange_raw_score"], 40.0)
+        self.assertEqual(progress["exchange_score"], 40.0)
         self.assertEqual(progress["listed_exchanges"], ["Bitget", "Gate", "MEXC"])
+
+    def test_apply_cmc_chain_override_uses_token_platforms_over_rootdata_text(self):
+        with patch(
+            "web_app.fetch_cmc_token_detail",
+            return_value={
+                "symbol": "NEX",
+                "platforms": [
+                    {"contractPlatform": "Ethereum"},
+                    {"contractPlatform": "BNB Smart Chain (BEP20)"},
+                ],
+            },
+        ):
+            assessment = apply_cmc_chain_override(
+                {
+                    "project_name": "Nexus",
+                    "token_ticker": "NEX",
+                    "chains": ["Base", "Linea", "Scroll"],
+                    "chain_score": 100,
+                    "evidence_notes": ["Chains: Base, Linea, Scroll"],
+                }
+            )
+
+        self.assertEqual(assessment["chains"], ["Ethereum", "BNB Chain"])
+        self.assertEqual(assessment["chain_score"], 85.0)
+        self.assertEqual(assessment["evidence_notes"], ["CMC chains: Ethereum, BNB Chain"])
 
     def test_apply_icodrops_tge_signal_marks_binance_alpha_airdrop_as_tge(self):
         assessment = {

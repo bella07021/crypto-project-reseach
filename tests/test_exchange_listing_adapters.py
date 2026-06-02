@@ -1,4 +1,5 @@
 import json
+import subprocess
 import unittest
 from datetime import datetime, timezone
 
@@ -270,6 +271,53 @@ class ExchangeListingAdapterTests(unittest.TestCase):
         self.assertEqual(1, len(sources))
         self.assertEqual("s1", sources[0]["external_id"])
         self.assertIn("spot trading", sources[0]["raw_text"])
+
+    def test_bybit_live_fetcher_falls_back_to_browser_fetch_when_curl_fails(self):
+        calls = []
+        next_data = {
+            "props": {
+                "pageProps": {
+                    "articleInitEntity": {
+                        "list": [
+                            {
+                                "title": "New Spot Listing: Example Token (EXT)",
+                                "description": "Bybit will list Example Token (EXT) for spot trading.",
+                                "topics": ["Spot", "Spot Listings"],
+                                "url": "/article/spot",
+                                "objectID": "s1",
+                                "publish_time": 1780000100,
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+        html = f'<script id="__NEXT_DATA__" type="application/json">{json.dumps(next_data)}</script>'
+
+        def fake_fetch(url):
+            calls.append(("curl", url))
+            raise subprocess.CalledProcessError(56, ["curl", url])
+
+        def fake_browser_fetch(url):
+            calls.append(("browser", url))
+            return html
+
+        sources = fetch_live_sources(
+            "bybit",
+            limit=2,
+            max_pages=1,
+            fetch_text=fake_fetch,
+            fetch_browser_text=fake_browser_fetch,
+        )
+
+        self.assertEqual(
+            [
+                ("curl", "https://announcements.bybit.com/en/?category=new_crypto&page=1"),
+                ("browser", "https://announcements.bybit.com/en/?category=new_crypto&page=1"),
+            ],
+            calls,
+        )
+        self.assertEqual(["s1"], [source["external_id"] for source in sources])
 
     def test_coinbase_sources_extract_roadmap_posts_from_x_search_html(self):
         html = """
