@@ -23,6 +23,7 @@ from live_project_fetcher import fetch_live_project_detail, normalize_rootdata_u
 
 
 DEFAULT_BENCHMARK_CSV = Path("output/rootdata_projects_x_enriched_fullv2.csv")
+DEFAULT_FUNDRAISING_CSV = Path("output/rootdata_fundraising/rootdata_fundraising_by_sector.csv")
 DEFAULT_WORKBOOK = Path("output/crypto_project_scores.xlsx")
 
 
@@ -41,6 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--listing-signal", action="append", default=[])
     parser.add_argument("--evidence-note", action="append", default=[])
     parser.add_argument("--benchmark-csv", type=Path, default=DEFAULT_BENCHMARK_CSV)
+    parser.add_argument("--fundraising-csv", type=Path, default=DEFAULT_FUNDRAISING_CSV)
     parser.add_argument("--workbook", type=Path, default=DEFAULT_WORKBOOK)
     parser.add_argument("--today", help="Override today's date in YYYY-MM-DD format.")
     parser.add_argument("--no-live", action="store_true", help="Disable live RootData/X fetching.")
@@ -76,9 +78,88 @@ def find_project_row(rows: Iterable[dict[str, str]], x_handle: str, rootdata_url
     return None
 
 
+def normalized_name(value: str) -> str:
+    return "".join(ch for ch in value.lower() if ch.isalnum())
+
+
+def related_project_name(left: str, right: str) -> bool:
+    left_name = normalized_name(left)
+    right_name = normalized_name(right)
+    if not left_name or not right_name:
+        return False
+    return left_name == right_name or left_name in right_name or right_name in left_name
+
+
+def split_investors(value: str) -> list[str]:
+    investors: list[str] = []
+    seen: set[str] = set()
+    for item in value.replace("；", ";").replace("|", ";").split(";"):
+        name = item.strip()
+        key = name.lower()
+        if not name or key in seen:
+            continue
+        seen.add(key)
+        investors.append(name)
+    return investors
+
+
+def find_fundraising_rows(
+    rows: Iterable[dict[str, str]],
+    *,
+    token_ticker: str,
+    project_name: str,
+    rootdata_url: str,
+) -> list[dict[str, str]]:
+    wanted_token = token_ticker.strip().upper()
+    wanted_name = project_name.strip()
+    wanted_url = normalize_rootdata_url(rootdata_url)
+    matches: list[dict[str, str]] = []
+    for row in rows:
+        row_token = row.get("token_symbol", "").strip().upper()
+        row_names = [row.get("project_name", ""), row.get("project_name_en", "")]
+        row_url = normalize_rootdata_url(row.get("project_url", ""))
+        token_match = bool(wanted_token and row_token == wanted_token)
+        name_match = any(related_project_name(wanted_name, row_name) for row_name in row_names)
+        url_match = bool(wanted_url and row_url == wanted_url)
+        if url_match or (token_match and (name_match or not project_name.strip())):
+            matches.append(row)
+    return matches
+
+
+def fundraising_investors(rows: Iterable[dict[str, str]]) -> list[str]:
+    investors: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        for investor in split_investors(row.get("investors", "")):
+            key = investor.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            investors.append(investor)
+    return investors
+
+
+def merge_investors(primary: Iterable[str], fallback: Iterable[str]) -> tuple[list[str], list[str]]:
+    investors: list[str] = []
+    added_from_fallback: list[str] = []
+    seen: set[str] = set()
+    for source_name, names in (("primary", primary), ("fallback", fallback)):
+        for name in names:
+            investor = name.strip()
+            key = investor.lower()
+            if not investor or key in seen:
+                continue
+            seen.add(key)
+            investors.append(investor)
+            if source_name == "fallback":
+                added_from_fallback.append(investor)
+    return investors, added_from_fallback
+
+
 def build_assessment(args: argparse.Namespace) -> dict[str, object]:
     benchmarks = load_benchmarks(args.benchmark_csv)
     project_row = find_project_row(benchmarks, args.x_handle, args.rootdata_url) or {}
+    fundraising_rows = load_benchmarks(getattr(args, "fundraising_csv", DEFAULT_FUNDRAISING_CSV))
     live_detail = (
         None
         if args.no_live
@@ -109,7 +190,24 @@ def build_assessment(args: argparse.Namespace) -> dict[str, object]:
     team_score = calculate_team_score(team_raw_score, team_background)
     funding_score = calculate_funding_score(funding_amount, funding_date, today=today)
     social_score = calculate_social_percentile(benchmarks, bucket, followers)
-    investors = live_detail.investors if live_detail else []
+    project_name_for_matching = (
+        str(getattr(args, "project_name", "") or "").strip()
+        or (live_detail.project_name if live_detail and live_detail.project_name else project_row.get("project_name", ""))
+    )
+    token_ticker_for_matching = (
+        str(getattr(args, "token_ticker", "") or "").strip().upper()
+        or (live_detail.token_ticker if live_detail and live_detail.token_ticker else project_row.get("token_symbol", ""))
+    )
+    matched_fundraising_rows = find_fundraising_rows(
+        fundraising_rows,
+        token_ticker=token_ticker_for_matching,
+        project_name=project_name_for_matching,
+        rootdata_url=args.rootdata_url,
+    )
+    investors, fundraising_investors_added = merge_investors(
+        live_detail.investors if live_detail else [],
+        fundraising_investors(matched_fundraising_rows),
+    )
     chains = live_detail.chains if live_detail else []
     investor_score = calculate_investor_score(investors)
     chain_score = calculate_chain_score(chains)
@@ -125,18 +223,18 @@ def build_assessment(args: argparse.Namespace) -> dict[str, object]:
     evidence_notes = list(args.evidence_note)
     if live_detail:
         evidence_notes.extend(live_detail.evidence_notes)
+    if fundraising_investors_added:
+        evidence_notes.append(f"RootData fundraising investors: {', '.join(fundraising_investors_added)}")
 
     return {
         "assessed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "x_handle": (live_detail.x_handle if live_detail and live_detail.x_handle else args.x_handle.strip().lstrip("@")),
         "rootdata_url": args.rootdata_url,
         "project_name": (
-            str(getattr(args, "project_name", "") or "").strip()
-            or (live_detail.project_name if live_detail and live_detail.project_name else project_row.get("project_name", ""))
+            project_name_for_matching
         ),
         "token_ticker": (
-            str(getattr(args, "token_ticker", "") or "").strip().upper()
-            or (live_detail.token_ticker if live_detail and live_detail.token_ticker else project_row.get("token_symbol", ""))
+            token_ticker_for_matching
         ),
         "bucket": bucket,
         "x_followers": followers or 0,

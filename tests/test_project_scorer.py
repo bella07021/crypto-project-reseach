@@ -1,4 +1,5 @@
 import unittest
+import argparse
 import csv
 import json
 import subprocess
@@ -17,6 +18,7 @@ from project_scorer import (
     calculate_total_score,
 )
 from live_project_fetcher import (
+    LiveProjectDetail,
     enrich_team_members_from_linkedin,
     fetch_live_project_detail,
     fetch_x_signal_htmls,
@@ -27,7 +29,7 @@ from live_project_fetcher import (
     rootdata_fetch_urls,
     supplement_tge_evidence_from_x_html,
 )
-from score_project import make_funding_round_rows, make_roadmap_event_rows, make_score_rows
+from score_project import build_assessment, make_funding_round_rows, make_roadmap_event_rows, make_score_rows
 
 
 class ProjectScorerTests(unittest.TestCase):
@@ -564,6 +566,107 @@ class ProjectScorerTests(unittest.TestCase):
         self.assertEqual(calculate_investor_score(["YZi Labs", "Coinbase Ventures"]), 100.0)
         self.assertEqual(calculate_chain_score(["Base"]), 100.0)
         self.assertEqual(calculate_chain_score(["Solana"]), 95.0)
+
+    def test_build_assessment_merges_rootdata_fundraising_investors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            benchmark = tmp_path / "benchmark.csv"
+            fundraising = tmp_path / "fundraising.csv"
+            workbook = tmp_path / "scores.xlsx"
+            with benchmark.open("w", encoding="utf-8", newline="") as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=[
+                        "bucket",
+                        "project_name",
+                        "token_symbol",
+                        "project_url",
+                        "x_handle",
+                        "x_followers",
+                    ],
+                )
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "bucket": "infra",
+                        "project_name": "Billions",
+                        "token_symbol": "BILL",
+                        "project_url": "https://cn.rootdata.com/Projects/detail/Billions?k=MTY1NDQ%3D",
+                        "x_handle": "billions_ntwk",
+                        "x_followers": "524834",
+                    }
+                )
+            with fundraising.open("w", encoding="utf-8", newline="") as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=[
+                        "project_name",
+                        "project_name_en",
+                        "token_symbol",
+                        "amount_usd",
+                        "funding_date",
+                        "investors",
+                        "project_url",
+                    ],
+                )
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "project_name": "Billions",
+                        "project_name_en": "Billions",
+                        "token_symbol": "BILL",
+                        "amount_usd": "30000000",
+                        "funding_date": "2025-07-30",
+                        "investors": "Coinbase Ventures; Liberty City Ventures; Polychain",
+                        "project_url": "https://cn.rootdata.com/Projects/detail/Billions?k=16544",
+                    }
+                )
+            args = argparse.Namespace(
+                x_handle="billions_ntwk",
+                rootdata_url="https://cn.rootdata.com/Projects/detail/Billions?k=MTY1NDQ%3D",
+                token_ticker="BILL",
+                project_name="Billions Network",
+                team_raw_score=80,
+                team_background="international",
+                funding_amount_usd=0,
+                funding_date=None,
+                bucket="",
+                tge_signal=[],
+                listing_signal=[],
+                evidence_note=[],
+                benchmark_csv=benchmark,
+                fundraising_csv=fundraising,
+                workbook=workbook,
+                today="2026-06-02",
+                no_live=False,
+                rootdata_html="",
+            )
+            live_detail = LiveProjectDetail(
+                project_name="Billions",
+                token_ticker="BILL",
+                x_handle="billions_ntwk",
+                bucket="infra",
+                x_followers=524834,
+                latest_funding_amount_usd=30_000_000,
+                latest_funding_date=date(2025, 7, 30),
+                team_raw_score=80,
+                team_background="international",
+                investors=["Coinbase Ventures"],
+                fetch_status="ok",
+            )
+
+            with patch("score_project.fetch_live_project_detail", return_value=live_detail):
+                assessment = build_assessment(args)
+
+            self.assertEqual(
+                assessment["investors"],
+                ["Coinbase Ventures", "Liberty City Ventures", "Polychain"],
+            )
+            self.assertGreater(assessment["investor_score"], 0)
+            self.assertIn(
+                "RootData fundraising investors: Liberty City Ventures, Polychain",
+                assessment["evidence_notes"],
+            )
 
     def test_cli_writes_workbook_and_prints_json(self):
         with tempfile.TemporaryDirectory() as tmp:
