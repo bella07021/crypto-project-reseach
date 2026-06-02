@@ -37,6 +37,13 @@ function scoreRing(value, label = "基本面总分") {
   `;
 }
 
+function exchangeDisplayName(exchange) {
+  const name = String(exchange || "");
+  if (name === "Upbit 韩元现货") return "Upbit";
+  if (name === "Bithumb 韩元现货") return "Bithumb";
+  return name;
+}
+
 function tokenLabel(assessment) {
   return assessment.token_ticker || assessment.project_name || assessment.x_handle || "--";
 }
@@ -165,7 +172,7 @@ function scoreReason(kind, assessment) {
     const signals = assessment.pre_tge_listing_signals || [];
     if (!signals.length) return "暂无 exchange listings 预上线信号";
     return signals
-      .map((item) => item.exchange || "--")
+      .map((item) => exchangeDisplayName(item.exchange) || "--")
       .join("、");
   }
   const percentile = Number(assessment.social_score || 0);
@@ -266,8 +273,19 @@ function exchangeListingDetails(assessment) {
   }));
 }
 
+function shouldShowExchangeTime(exchange) {
+  const name = String(exchange || "");
+  return [
+    "Coinbase",
+    "BN 现货",
+    "BN 合约",
+    "Upbit 韩元现货",
+    "Bithumb 韩元现货",
+  ].includes(name);
+}
+
 function exchangeTimeText(item) {
-  if (!item.listed_at) return "时间待确认";
+  if (!shouldShowExchangeTime(item.exchange) || !item.listed_at) return "";
   const dayText = item.days_after_tge === undefined || item.days_after_tge === null
     ? ""
     : ` · TGE 后 ${item.days_after_tge} 天`;
@@ -321,11 +339,12 @@ function renderRoadmap(el, assessment) {
     return;
   }
   for (const exchange of exchanges) {
+    const meta = exchangeTimeText(exchange);
     const item = document.createElement("div");
-    item.className = "timeline-item exchange-timeline-item";
+    item.className = meta ? "timeline-item exchange-timeline-item" : "timeline-item exchange-timeline-item name-only";
     item.innerHTML = `
-      <div class="timeline-name">${exchange.exchange}</div>
-      <div class="timeline-meta">${exchangeTimeText(exchange)}</div>
+      <div class="timeline-name">${exchangeDisplayName(exchange.exchange)}</div>
+      ${meta ? `<div class="timeline-meta">${meta}</div>` : ""}
     `;
     el.appendChild(item);
   }
@@ -476,7 +495,7 @@ function scoreBreakdown(row) {
 function listedExchangeSummary(row) {
   const exchanges = exchangeListingDetails(row);
   const chips = exchanges.length
-    ? exchanges.map((item) => `<span>${item.exchange || "--"}</span>`).join("")
+    ? exchanges.map((item) => `<span>${exchangeDisplayName(item.exchange) || "--"}</span>`).join("")
     : "<span>暂无上线数据</span>";
   return `<div class="exchange-chips exchange-chips-compact">${chips}</div>`;
 }
