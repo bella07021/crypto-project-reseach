@@ -22,4 +22,5 @@ if [ -z "${GITHUB_TOKEN:-}" ]; then
   exec /bin/sleep 3600
 fi
 
-exec /usr/bin/python3 "$PROJECT_DIR/request_watcher.py" --interval "${WATCHER_INTERVAL_SECONDS:-10}"
+PYTHON_BIN="${WATCHER_PYTHON_BIN:-/Library/Frameworks/Python.framework/Versions/3.11/bin/python3}"
+exec "$PYTHON_BIN" "$PROJECT_DIR/request_watcher.py" --interval "${WATCHER_INTERVAL_SECONDS:-10}"
