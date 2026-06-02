@@ -13,6 +13,7 @@ from web_app import (
     dashboard_rows,
     request_status_payload,
     request_dashboard_rows,
+    delete_project_data,
     exchange_progress,
     exchange_listing_details,
     exchange_progress_from_cmc,
@@ -90,6 +91,16 @@ class WebAppTests(unittest.TestCase):
 
         with patch("web_app.create_project_request", return_value={"ok": True, "created": True}) as mock:
             status, payload = handle_post_api("/api/request", body)
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["ok"])
+        mock.assert_called_once_with(body)
+
+    def test_delete_project_endpoint_delegates_to_delete_project_data(self):
+        body = {"token_ticker": "NEX", "project_name": "Nexus"}
+
+        with patch("web_app.delete_project_data", return_value={"ok": True, "deleted_history_count": 1}) as mock:
+            status, payload = handle_post_api("/api/project/delete", body)
 
         self.assertEqual(status, 200)
         self.assertTrue(payload["ok"])
@@ -564,6 +575,85 @@ class WebAppTests(unittest.TestCase):
         decoded = __import__("base64").b64decode(captured["payload"]["content"]).decode("utf-8")
         self.assertIn('"token_ticker": "DEMO"', decoded)
         self.assertIn("/repos/bella07021/crypto-project-reseach/contents/data/project_scores.jsonl", captured["url"])
+
+    def test_delete_project_data_removes_local_history_and_requests(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            workbook = tmp_path / "scores.xlsx"
+            history_path = workbook.with_suffix(".jsonl")
+            request_path = tmp_path / "requests.jsonl"
+            history_path.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "token_ticker": "NEX",
+                                "project_name": "Nexus",
+                                "x_handle": "NexusLabs",
+                                "rootdata_url": "https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "token_ticker": "SUI",
+                                "project_name": "Sui",
+                                "x_handle": "SuiNetwork",
+                                "rootdata_url": "https://cn.rootdata.com/projects/detail/Sui?k=Mjc5Nw%3D%3D",
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            request_path.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "request_id": "nex",
+                                "token_ticker": "NEX",
+                                "project_name": "Nexus",
+                                "rootdata_url": "https://www.rootdata.com/Projects/detail/Nexus?k=MTE3NDI%3D",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "request_id": "sui",
+                                "token_ticker": "SUI",
+                                "project_name": "Sui",
+                                "rootdata_url": "https://cn.rootdata.com/projects/detail/Sui?k=Mjc5Nw%3D%3D",
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with patch.dict(
+                os.environ,
+                {
+                    "GITHUB_TOKEN": "",
+                    "GITHUB_REQUESTS_PATH": str(request_path),
+                },
+            ):
+                result = delete_project_data(
+                    {
+                        "token_ticker": "NEX",
+                        "project_name": "Nexus",
+                        "rootdata_url": "https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D",
+                    },
+                    workbook,
+                )
+
+            history_rows = [json.loads(line) for line in history_path.read_text(encoding="utf-8").splitlines()]
+            request_rows = [json.loads(line) for line in request_path.read_text(encoding="utf-8").splitlines()]
+
+        self.assertEqual(result["deleted_history_count"], 1)
+        self.assertEqual(result["deleted_request_count"], 1)
+        self.assertEqual([row["token_ticker"] for row in history_rows], ["SUI"])
+        self.assertEqual([row["request_id"] for row in request_rows], ["sui"])
 
     def test_create_project_request_deduplicates_active_rootdata_url(self):
         writes = []

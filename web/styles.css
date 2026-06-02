@@ -144,7 +144,7 @@ button:disabled { cursor: wait; opacity: 0.65; }
 
 .report-hero {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 180px;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 18px;
   align-items: center;
   padding: 20px;
@@ -162,18 +162,34 @@ button:disabled { cursor: wait; opacity: 0.65; }
   word-break: break-word;
 }
 
+.danger-button {
+  margin-top: 14px;
+  width: fit-content;
+  background: transparent;
+  color: #ffb4b4;
+  border: 1px solid rgba(255, 133, 133, 0.45);
+  padding: 8px 12px;
+}
+
+.danger-button:hover {
+  border-color: rgba(255, 133, 133, 0.9);
+  background: rgba(255, 92, 92, 0.08);
+}
+
 .total-score {
   --score: 0%;
   display: grid;
-  grid-template-columns: auto auto;
+  grid-template-columns: 64px max-content;
   grid-template-areas:
     "ring value"
     "ring label";
   align-items: center;
+  justify-self: end;
   column-gap: 12px;
   row-gap: 2px;
-  min-width: 180px;
-  min-height: 132px;
+  width: max-content;
+  min-width: 230px;
+  min-height: 116px;
   border: 1px solid #35516d;
   border-radius: 8px;
   background: #111d29;
@@ -192,9 +208,10 @@ button:disabled { cursor: wait; opacity: 0.65; }
 
 .total-score strong {
   grid-area: value;
-  font-size: 32px;
+  font-size: 34px;
   line-height: 1;
   font-weight: 900;
+  white-space: nowrap;
 }
 
 .total-score small {

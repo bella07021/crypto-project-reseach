@@ -274,6 +274,38 @@ function exchangeTimeText(item) {
   return `${item.listed_at}${dayText}`;
 }
 
+function deleteProjectPayload(assessment) {
+  return {
+    token_ticker: assessment.token_ticker || "",
+    project_name: assessment.project_name || "",
+    x_handle: assessment.x_handle || "",
+    rootdata_url: assessment.rootdata_url || "",
+  };
+}
+
+async function deleteCurrentProject(assessment) {
+  const label = tokenLabel(assessment);
+  if (!window.confirm(`确认删除 ${label} 的项目数据？`)) return;
+  const response = await fetch("/api/project/delete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(deleteProjectPayload(assessment)),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload.ok) {
+    throw new Error(payload.error || "删除失败");
+  }
+  state.currentAssessment = null;
+  reportMount.innerHTML = `
+    <section class="report-section">
+      <h3>项目已删除</h3>
+      <p>${label} 的评分历史已移除。</p>
+    </section>
+  `;
+  await loadDashboard();
+  switchView("dashboard");
+}
+
 function visibleTgeMethod(assessment) {
   if (assessment.tge_status !== "已 TGE") return "";
   const method = String(assessment.tge_method || "").trim();
@@ -322,6 +354,12 @@ function renderReport(assessment, workbook) {
   get("socialReason").textContent = scoreReason("social", assessment);
   get("chainReason").textContent = scoreReason("chain", assessment);
   get("exchangeReason").textContent = scoreReason("exchange", assessment);
+  const deleteButton = fragment.querySelector('[data-action="deleteProject"]');
+  deleteButton.addEventListener("click", () => {
+    deleteCurrentProject(assessment).catch((error) => {
+      window.alert(error.message);
+    });
+  });
   get("fetchStatus").textContent = assessment.fetch_status || "unknown";
   get("tgeStatus").textContent = assessment.tge_status || "--";
   get("tgeProbability").textContent = assessment.tge_status === "已 TGE" ? "已 TGE" : "未 TGE";

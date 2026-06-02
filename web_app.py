@@ -329,6 +329,19 @@ def write_github_requests(rows: list[dict[str, Any]], message: str, sha: str | N
     write_github_jsonl(request_storage_path(), rows, message, sha)
 
 
+def write_local_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def read_local_jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -343,6 +356,73 @@ def project_request_key(rootdata_url: str, x_handle: str = "") -> str:
 def project_request_id(request_key: str, timestamp: str = "") -> str:
     seed = f"{request_key}|{timestamp}" if timestamp else request_key
     return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
+
+
+def project_delete_label(data: dict[str, Any]) -> str:
+    return str(data.get("token_ticker") or data.get("token_symbol") or data.get("project_name") or data.get("x_handle") or "project").strip()
+
+
+def row_matches_project(row: dict[str, Any], data: dict[str, Any]) -> bool:
+    target_url = normalize_rootdata_url(str(data.get("rootdata_url", ""))).lower()
+    target_handle = normalize_x_handle(data.get("x_handle", "")).lower()
+    target_symbol = str(data.get("token_ticker") or data.get("token_symbol") or "").strip().upper()
+    target_name = str(data.get("project_name") or "").strip().lower()
+
+    row_url = normalize_rootdata_url(str(row.get("rootdata_url", ""))).lower()
+    row_handle = normalize_x_handle(row.get("x_handle", "")).lower()
+    row_symbol = str(row.get("token_ticker") or row.get("token_symbol") or "").strip().upper()
+    row_name = str(row.get("project_name") or "").strip().lower()
+
+    if target_url and row_url and target_url == row_url:
+        return True
+    if target_handle and row_handle and target_handle == row_handle:
+        return True
+    if target_symbol and row_symbol and target_symbol == row_symbol:
+        return True
+    if target_name and row_name and target_name == row_name:
+        return True
+    return False
+
+
+def delete_project_data(data: dict[str, Any], workbook: Path | None = None) -> dict[str, Any]:
+    if not any(str(data.get(key) or "").strip() for key in ("rootdata_url", "x_handle", "token_ticker", "token_symbol", "project_name")):
+        raise ValueError("project identifier is required")
+
+    label = project_delete_label(data)
+    if github_storage_config():
+        history_config = github_storage_config()
+        history_rows, history_sha = read_github_history_with_sha()
+        kept_history = [row for row in history_rows if not row_matches_project(row, data)]
+        if len(kept_history) != len(history_rows):
+            write_github_jsonl(
+                history_config["path"],
+                kept_history,
+                f"Delete score data for {label}",
+                history_sha,
+            )
+
+        request_rows, request_sha = read_github_requests_with_sha()
+        kept_requests = [row for row in request_rows if not row_matches_project(row, data)]
+        if len(kept_requests) != len(request_rows):
+            write_github_requests(kept_requests, f"Delete project request for {label}", request_sha)
+    else:
+        history_path = history_path_for(workbook or runtime_workbook_path())
+        history_rows = read_local_jsonl(history_path)
+        kept_history = [row for row in history_rows if not row_matches_project(row, data)]
+        if len(kept_history) != len(history_rows):
+            write_local_jsonl(history_path, kept_history)
+
+        request_path = ROOT / request_storage_path()
+        request_rows = read_local_jsonl(request_path)
+        kept_requests = [row for row in request_rows if not row_matches_project(row, data)]
+        if len(kept_requests) != len(request_rows):
+            write_local_jsonl(request_path, kept_requests)
+
+    return {
+        "ok": True,
+        "deleted_history_count": len(history_rows) - len(kept_history),
+        "deleted_request_count": len(request_rows) - len(kept_requests),
+    }
 
 
 def parse_iso_datetime(value: str) -> datetime | None:
@@ -1211,6 +1291,8 @@ def handle_post_api(path: str, data: dict[str, Any]) -> tuple[int, dict[str, Any
         return 200, create_project_request(data)
     if path == "/api/score":
         return 200, score_payload(data)
+    if path == "/api/project/delete":
+        return 200, delete_project_data(data)
     if path == "/api/exchange-listings/sync":
         return 200, run_exchange_listing_manual_sync(data)
     return 404, {"ok": False, "error": "not found"}
@@ -1242,7 +1324,7 @@ class CryptoScoringHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path not in {"/api/score", "/api/request", "/api/exchange-listings/sync"}:
+        if parsed.path not in {"/api/score", "/api/request", "/api/project/delete", "/api/exchange-listings/sync"}:
             self.send_error(404)
             return
         try:
