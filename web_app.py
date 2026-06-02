@@ -26,11 +26,16 @@ from score_project import (
     load_benchmarks,
     write_workbook,
 )
+from project_scorer import calculate_chain_score, calculate_total_score
+from exchange_listings import db as exchange_listing_db
+from exchange_listings.adapters import fetch_live_sources
+from exchange_listings.sync import run_sync
 from live_project_fetcher import clean_html_text, fetch_text, normalize_rootdata_url, parse_human_date
 
 
 ROOT = Path(__file__).resolve().parent
 WEB_DIR = ROOT / "web"
+EXCHANGE_LISTINGS_DB_PATH = ROOT / "data" / "exchange_listings.sqlite"
 GITHUB_HISTORY_PATH = "data/project_scores.jsonl"
 GITHUB_REQUESTS_PATH = "data/project_requests.jsonl"
 ACTIVE_REQUEST_STATUSES = {"pending", "processing"}
@@ -159,10 +164,15 @@ def score_payload(data: dict[str, Any]) -> dict[str, Any]:
     args = namespace_from_payload(payload)
     assessment = build_assessment(args)
     assessment.update(exchange_progress(assessment.get("roadmap_events", [])) if payload.no_live else project_exchange_progress(assessment))
+    assessment.update(pre_tge_exchange_progress_from_db(assessment))
+    if not payload.no_live:
+        apply_cmc_chain_override(assessment)
+    refresh_total_score(assessment)
     if not payload.no_live:
         apply_icodrops_tge_signal_from_web(assessment)
     prune_foreign_project_tge_links(assessment)
     apply_tge_exchange_gate(assessment)
+    assessment["exchange_listing_details"] = exchange_listing_details(assessment)
     if github_storage_config():
         history = append_github_history(assessment)
         workbook = github_storage_label()
@@ -319,6 +329,19 @@ def write_github_requests(rows: list[dict[str, Any]], message: str, sha: str | N
     write_github_jsonl(request_storage_path(), rows, message, sha)
 
 
+def write_local_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def read_local_jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -333,6 +356,73 @@ def project_request_key(rootdata_url: str, x_handle: str = "") -> str:
 def project_request_id(request_key: str, timestamp: str = "") -> str:
     seed = f"{request_key}|{timestamp}" if timestamp else request_key
     return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
+
+
+def project_delete_label(data: dict[str, Any]) -> str:
+    return str(data.get("token_ticker") or data.get("token_symbol") or data.get("project_name") or data.get("x_handle") or "project").strip()
+
+
+def row_matches_project(row: dict[str, Any], data: dict[str, Any]) -> bool:
+    target_url = normalize_rootdata_url(str(data.get("rootdata_url", ""))).lower()
+    target_handle = normalize_x_handle(data.get("x_handle", "")).lower()
+    target_symbol = str(data.get("token_ticker") or data.get("token_symbol") or "").strip().upper()
+    target_name = str(data.get("project_name") or "").strip().lower()
+
+    row_url = normalize_rootdata_url(str(row.get("rootdata_url", ""))).lower()
+    row_handle = normalize_x_handle(row.get("x_handle", "")).lower()
+    row_symbol = str(row.get("token_ticker") or row.get("token_symbol") or "").strip().upper()
+    row_name = str(row.get("project_name") or "").strip().lower()
+
+    if target_url and row_url and target_url == row_url:
+        return True
+    if target_handle and row_handle and target_handle == row_handle:
+        return True
+    if target_symbol and row_symbol and target_symbol == row_symbol:
+        return True
+    if target_name and row_name and target_name == row_name:
+        return True
+    return False
+
+
+def delete_project_data(data: dict[str, Any], workbook: Path | None = None) -> dict[str, Any]:
+    if not any(str(data.get(key) or "").strip() for key in ("rootdata_url", "x_handle", "token_ticker", "token_symbol", "project_name")):
+        raise ValueError("project identifier is required")
+
+    label = project_delete_label(data)
+    if github_storage_config():
+        history_config = github_storage_config()
+        history_rows, history_sha = read_github_history_with_sha()
+        kept_history = [row for row in history_rows if not row_matches_project(row, data)]
+        if len(kept_history) != len(history_rows):
+            write_github_jsonl(
+                history_config["path"],
+                kept_history,
+                f"Delete score data for {label}",
+                history_sha,
+            )
+
+        request_rows, request_sha = read_github_requests_with_sha()
+        kept_requests = [row for row in request_rows if not row_matches_project(row, data)]
+        if len(kept_requests) != len(request_rows):
+            write_github_requests(kept_requests, f"Delete project request for {label}", request_sha)
+    else:
+        history_path = history_path_for(workbook or runtime_workbook_path())
+        history_rows = read_local_jsonl(history_path)
+        kept_history = [row for row in history_rows if not row_matches_project(row, data)]
+        if len(kept_history) != len(history_rows):
+            write_local_jsonl(history_path, kept_history)
+
+        request_path = ROOT / request_storage_path()
+        request_rows = read_local_jsonl(request_path)
+        kept_requests = [row for row in request_rows if not row_matches_project(row, data)]
+        if len(kept_requests) != len(request_rows):
+            write_local_jsonl(request_path, kept_requests)
+
+    return {
+        "ok": True,
+        "deleted_history_count": len(history_rows) - len(kept_history),
+        "deleted_request_count": len(request_rows) - len(kept_requests),
+    }
 
 
 def parse_iso_datetime(value: str) -> datetime | None:
@@ -383,43 +473,107 @@ def create_project_request(data: dict[str, Any]) -> dict[str, Any]:
 
 
 EXCHANGE_SCORE_RULES = [
-    ("BN 现货", 9.5, ("binance spot", "binance listed", "bn 现货", "币安现货")),
-    ("Coinbase", 8.0, ("coinbase",)),
-    ("Upbit 韩元现货", 8.0, ("upbit",)),
-    ("Bithumb 韩元现货", 6.0, ("bithumb",)),
-    ("BN 合约", 5.0, ("binance futures", "binance perpetual", "bn 合约", "币安合约")),
-    ("OKX", 4.5, ("okx",)),
-    ("Bybit", 4.5, ("bybit",)),
-    ("Gate", 4.5, ("gate",)),
+    ("BN 现货", 85.0, ("binance spot", "binance listed", "bn 现货", "币安现货")),
+    ("Coinbase", 95.0, ("coinbase",)),
+    ("Upbit 韩元现货", 95.0, ("upbit",)),
+    ("Bithumb 韩元现货", 92.0, ("bithumb",)),
+    ("BN 合约", 75.0, ("binance futures", "binance perpetual", "bn 合约", "币安合约")),
+    ("OKX", 78.0, ("okx",)),
+    ("Bybit", 78.0, ("bybit",)),
+    ("Kraken", 76.0, ("kraken",)),
+    ("Gate", 55.0, ("gate",)),
 ]
 
 MAINSTREAM_SPOT_EXCHANGES = {
-    "okx": "OKX",
-    "bybit": "Bybit",
     "gate": "Gate",
     "bitget": "Bitget",
     "kucoin": "KuCoin",
     "mexc": "MEXC",
-    "kraken": "Kraken",
 }
-
-EXCHANGE_SCORE_SCALE = 100 / 30
 CMC_MARKET_CACHE: dict[str, list[dict[str, Any]]] = {}
-
-
-def scaled_exchange_score(raw_score: float) -> float:
-    return round(min(raw_score * EXCHANGE_SCORE_SCALE, 100.0), 2)
+CMC_TOKEN_DETAIL_CACHE: dict[str, dict[str, Any]] = {}
 
 
 def exchange_score_group(label: str) -> str:
-    if label in set(MAINSTREAM_SPOT_EXCHANGES.values()) | {"OKX", "Bybit", "Gate"}:
-        return "主流现货"
     return label
+
+
+def pre_tge_exchange_quality_score(labels: list[str]) -> float:
+    label_set = set(labels)
+    if "Coinbase" in label_set or {"Upbit 韩元现货", "Bithumb 韩元现货"} & label_set:
+        return 95.0
+    if "BN 现货" in label_set:
+        return 85.0
+    if {"OKX", "Bybit", "Kraken"} & label_set:
+        return 78.0
+    if "BN 合约" in label_set:
+        return 75.0
+
+    ordinary_count = len([label for label in labels if label in set(MAINSTREAM_SPOT_EXCHANGES.values())])
+    if ordinary_count >= 5:
+        return 30.0
+    if ordinary_count >= 3:
+        return 40.0
+    if ordinary_count == 2:
+        return 50.0
+    if ordinary_count == 1:
+        return 55.0
+    return 10.0
 
 
 def slugify_project_name(value: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", value.strip().lower())
     return slug.strip("-")
+
+
+def normalize_cmc_chain_name(value: str) -> str:
+    lowered = value.lower()
+    if "bnb" in lowered or "bep20" in lowered or "bsc" in lowered:
+        return "BNB Chain"
+    if "ethereum" in lowered:
+        return "Ethereum"
+    if "base" in lowered:
+        return "Base"
+    if "solana" in lowered:
+        return "Solana"
+    if "sui" in lowered:
+        return "Sui"
+    return value.strip()
+
+
+def fetch_cmc_token_detail(project_name: str, token_ticker: str) -> dict[str, Any]:
+    symbol = token_ticker.upper().strip()
+    slugs = [slugify_project_name(project_name)]
+    if slugs[0]:
+        slugs.append(f"{slugs[0]}-labs")
+    for slug in [candidate for candidate in slugs if candidate]:
+        cache_key = f"detail:{slug}"
+        if cache_key not in CMC_TOKEN_DETAIL_CACHE:
+            request = Request(
+                f"https://api.coinmarketcap.com/data-api/v3/cryptocurrency/detail?{urlencode({'slug': slug})}",
+                headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
+            )
+            try:
+                context = ssl._create_unverified_context()
+                with urlopen(request, timeout=8, context=context) as response:
+                    payload = json.loads(response.read().decode("utf-8", errors="ignore"))
+                CMC_TOKEN_DETAIL_CACHE[cache_key] = payload.get("data") or {}
+            except Exception:
+                CMC_TOKEN_DETAIL_CACHE[cache_key] = {}
+        detail = CMC_TOKEN_DETAIL_CACHE[cache_key]
+        if detail and (not symbol or str(detail.get("symbol", "")).upper() == symbol):
+            return detail
+    return {}
+
+
+def cmc_token_chains(project_name: str, token_ticker: str) -> list[str]:
+    detail = fetch_cmc_token_detail(project_name, token_ticker)
+    chains: list[str] = []
+    for platform in detail.get("platforms", []) or []:
+        chain = normalize_cmc_chain_name(str(platform.get("contractPlatform") or ""))
+        if chain and chain not in chains:
+            chains.append(chain)
+    return chains
 
 
 def fetch_cmc_web_market_pairs(project_name: str, token_ticker: str) -> list[dict[str, Any]]:
@@ -511,47 +665,49 @@ def classify_cmc_market_pair(pair: dict[str, Any]) -> tuple[str, float] | None:
     if "binance alpha" in haystack:
         return None
     if "binance" in haystack and category == "spot":
-        return "BN 现货", 9.5
+        return "BN 现货", 85.0
     if "binance" in haystack and category in {"derivatives", "futures"}:
-        return "BN 合约", 5.0
+        return "BN 合约", 75.0
     if "coinbase" in haystack and category == "spot":
-        return "Coinbase", 8.0
+        return "Coinbase", 95.0
     if "upbit" in haystack and "KRW" in market_pair and category == "spot":
-        return "Upbit 韩元现货", 8.0
+        return "Upbit 韩元现货", 95.0
     if "bithumb" in haystack and "KRW" in market_pair and category == "spot":
-        return "Bithumb 韩元现货", 6.0
+        return "Bithumb 韩元现货", 92.0
+    if "okx" in haystack and category == "spot":
+        return "OKX", 78.0
+    if "bybit" in haystack and category == "spot":
+        return "Bybit", 78.0
+    if "kraken" in haystack and category == "spot":
+        return "Kraken", 76.0
     for keyword, label in MAINSTREAM_SPOT_EXCHANGES.items():
         if keyword in haystack and category == "spot":
-            return label, 4.5
+            return label, 55.0
     return None
 
 
 def exchange_progress_from_cmc(pairs: list[dict[str, Any]]) -> dict[str, Any]:
-    matched_scores: dict[str, float] = {}
     matched_labels: dict[str, float] = {}
     for pair in pairs:
         classified = classify_cmc_market_pair(pair)
         if not classified:
             continue
         label, raw_score = classified
-        group = exchange_score_group(label)
-        matched_scores[group] = max(raw_score, matched_scores.get(group, 0))
         matched_labels[label] = max(raw_score, matched_labels.get(label, 0))
 
     exchanges = sorted(matched_labels, key=lambda label: matched_labels[label], reverse=True)
-    raw_score = sum(matched_scores.values())
-    score = scaled_exchange_score(raw_score)
+    score = pre_tge_exchange_quality_score(exchanges)
     return {
         "exchange_score": score,
         "exchange_progress": score,
-        "exchange_raw_score": round(raw_score, 2),
+        "exchange_raw_score": round(score, 2),
+        "pre_tge_exchange_score": score,
         "exchange_source": pairs[0].get("source", "CoinMarketCap") if pairs else "CoinMarketCap",
         "listed_exchanges": exchanges,
     }
 
 
 def exchange_progress(roadmap_events: list[dict[str, Any]]) -> dict[str, Any]:
-    matched_scores: dict[str, float] = {}
     matched_labels: dict[str, float] = {}
     for event in roadmap_events:
         haystack = " ".join(
@@ -563,20 +719,187 @@ def exchange_progress(roadmap_events: list[dict[str, Any]]) -> dict[str, Any]:
         ).lower()
         for label, score, keywords in EXCHANGE_SCORE_RULES:
             if any(keyword in haystack for keyword in keywords):
-                group = exchange_score_group(label)
-                matched_scores[group] = max(score, matched_scores.get(group, 0))
                 matched_labels[label] = max(score, matched_labels.get(label, 0))
 
     exchanges = sorted(matched_labels, key=lambda label: matched_labels[label], reverse=True)
-    raw_score = sum(matched_scores.values())
-    score = scaled_exchange_score(raw_score)
+    score = pre_tge_exchange_quality_score(exchanges)
     return {
         "exchange_score": score,
         "exchange_progress": score,
-        "exchange_raw_score": round(raw_score, 2),
+        "exchange_raw_score": round(score, 2),
+        "pre_tge_exchange_score": score,
         "exchange_source": "RootData",
         "listed_exchanges": exchanges,
     }
+
+
+def _exchange_event_group(value: str) -> str:
+    lowered = value.lower()
+    if "upbit" in lowered:
+        return "Upbit 韩元现货"
+    if "bithumb" in lowered:
+        return "Bithumb 韩元现货"
+    if "韩所" in value or "韩国" in value:
+        return "韩所"
+    if "binance futures" in lowered or "binance perpetual" in lowered or "bn 合约" in lowered or "币安合约" in value:
+        return "BN 合约"
+    if "binance" in lowered or "bn 现货" in lowered or "币安现货" in value:
+        return "BN 现货"
+    for label in ("Coinbase", "Bitget", "Gate", "MEXC", "KuCoin", "Bybit", "OKX", "Kraken"):
+        if label.lower() in lowered:
+            return label
+    return value
+
+
+EXCHANGE_DB_LABELS = {
+    "binance": "BN 现货",
+    "coinbase": "Coinbase",
+    "upbit": "Upbit 韩元现货",
+    "bithumb": "Bithumb 韩元现货",
+    "okx": "OKX",
+    "bybit": "Bybit",
+    "kraken": "Kraken",
+    "gate": "Gate",
+    "kucoin": "KuCoin",
+    "bitget": "Bitget",
+    "mexc": "MEXC",
+}
+
+
+def exchange_label_from_db_key(value: str) -> str:
+    key = value.strip().lower()
+    return EXCHANGE_DB_LABELS.get(key, value.strip())
+
+
+def pre_tge_exchange_progress_from_db(row: dict[str, Any], db_path: Path | str = EXCHANGE_LISTINGS_DB_PATH) -> dict[str, Any]:
+    token_symbol = str(row.get("token_ticker") or row.get("token_symbol") or "").strip().upper()
+    project_name = str(row.get("project_name") or "").strip()
+    if not token_symbol and not project_name:
+        return {
+            "pre_tge_exchange_score": 10.0,
+            "pre_tge_exchange_source": "exchange_listings_db",
+            "pre_tge_listing_signals": [],
+        }
+
+    path = Path(db_path)
+    try:
+        exchange_listing_db.init_db(path)
+        with exchange_listing_db.connect(path) as conn:
+            events = conn.execute(
+                """
+                SELECT
+                    le.exchange,
+                    le.project_name,
+                    le.token_symbol,
+                    le.event_kind,
+                    le.status,
+                    le.announcement_url,
+                    le.announcement_title,
+                    le.announcement_published_at,
+                    le.trading_start_time,
+                    le.source_type,
+                    le.source_precedence,
+                    le.updated_at
+                FROM listing_events le
+                LEFT JOIN normalized_assets na ON na.id = le.normalized_asset_id
+                WHERE (
+                    (? != '' AND (UPPER(le.token_symbol) = ? OR UPPER(na.canonical_symbol) = ?))
+                    OR (? != '' AND (LOWER(le.project_name) = LOWER(?) OR LOWER(na.project_name) = LOWER(?)))
+                )
+                  AND le.listing_type = 'spot'
+                  AND le.status != 'unknown'
+                ORDER BY le.source_precedence DESC, le.updated_at DESC
+                """,
+                (token_symbol, token_symbol, token_symbol, project_name, project_name, project_name),
+            ).fetchall()
+    except Exception:
+        events = []
+
+    labels: list[str] = []
+    signals: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for event in events:
+        exchange, event_project_name, event_symbol, event_kind, status, url, title, published_at, trading_start_time, source_type, precedence, updated_at = event
+        label = exchange_label_from_db_key(str(exchange or ""))
+        key = (label, str(event_symbol or ""), str(status or ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        if label not in labels:
+            labels.append(label)
+        signals.append(
+            {
+                "exchange": label,
+                "project_name": event_project_name or "",
+                "token_symbol": event_symbol or "",
+                "event_kind": event_kind or "",
+                "status": status or "",
+                "announcement_url": url or "",
+                "announcement_title": title or "",
+                "announcement_published_at": published_at or "",
+                "trading_start_time": trading_start_time or "",
+                "source_type": source_type or "",
+                "source_precedence": precedence or 0,
+                "updated_at": updated_at or "",
+            }
+        )
+
+    return {
+        "pre_tge_exchange_score": pre_tge_exchange_quality_score(labels),
+        "pre_tge_exchange_source": "exchange_listings_db",
+        "pre_tge_listing_signals": signals,
+    }
+
+
+def _event_date(value: Any) -> str:
+    if not value:
+        return ""
+    return str(value).split("T", 1)[0]
+
+
+def _days_after_tge(event: dict[str, Any], tge_date: str) -> int | None:
+    if event.get("days_after_tge") is not None:
+        try:
+            return int(event["days_after_tge"])
+        except (TypeError, ValueError):
+            return None
+    listed_date = _event_date(event.get("date"))
+    if not listed_date or not tge_date:
+        return None
+    try:
+        return (datetime.fromisoformat(listed_date).date() - datetime.fromisoformat(tge_date).date()).days
+    except ValueError:
+        return None
+
+
+def exchange_listing_details(row: dict[str, Any]) -> list[dict[str, Any]]:
+    tge_date = str(row.get("tge_date") or rootdata_tge_date(row) or "")
+    events_by_group: dict[str, dict[str, Any]] = {}
+    for event in row.get("roadmap_events", []) or []:
+        event_type = str(event.get("type") or "")
+        if event_type == "TGE":
+            continue
+        group = _exchange_event_group(" ".join([event_type, str(event.get("name") or "")]))
+        if not group or not event.get("date"):
+            continue
+        existing = events_by_group.get(group)
+        if existing is None or _event_date(event.get("date")) < _event_date(existing.get("date")):
+            events_by_group[group] = event
+
+    details = []
+    for exchange in row.get("listed_exchanges", []) or []:
+        group = _exchange_event_group(str(exchange))
+        event = events_by_group.get(group) or (
+            events_by_group.get("韩所") if group in {"Upbit 韩元现货", "Bithumb 韩元现货"} else None
+        )
+        details.append(
+            {
+                "exchange": exchange,
+                "listed_at": _event_date(event.get("date")) if event else "",
+                "days_after_tge": _days_after_tge(event, tge_date) if event else None,
+            }
+        )
+    return details
 
 
 def project_exchange_progress(row: dict[str, Any]) -> dict[str, Any]:
@@ -591,6 +914,31 @@ def project_exchange_progress(row: dict[str, Any]) -> dict[str, Any]:
             token_ticker,
         )
     return exchange_progress_from_cmc(cmc_pairs) if cmc_pairs else exchange_progress(row.get("roadmap_events", []))
+
+
+def refresh_total_score(assessment: dict[str, Any]) -> dict[str, Any]:
+    assessment["pre_tge_exchange_score"] = assessment.get("pre_tge_exchange_score", assessment.get("exchange_score", 0))
+    assessment["total_score"] = calculate_total_score(
+        float(assessment.get("team_score") or 0),
+        float(assessment.get("funding_score") or 0),
+        float(assessment.get("social_score") or 0),
+        float(assessment.get("investor_score") or 0),
+        float(assessment.get("chain_score") or 0),
+        float(assessment.get("pre_tge_exchange_score") or 0),
+    )
+    return assessment
+
+
+def apply_cmc_chain_override(assessment: dict[str, Any]) -> dict[str, Any]:
+    chains = cmc_token_chains(str(assessment.get("project_name", "")), str(assessment.get("token_ticker", "")))
+    if not chains:
+        return assessment
+    assessment["chains"] = chains
+    assessment["chain_score"] = calculate_chain_score(chains)
+    notes = assessment.setdefault("evidence_notes", [])
+    notes[:] = [note for note in notes if not str(note).startswith("Chains: ")]
+    notes.append(f"CMC chains: {', '.join(chains)}")
+    return assessment
 
 
 def rootdata_tge_date(row: dict[str, Any]) -> str:
@@ -743,6 +1091,7 @@ def cached_exchange_progress(row: dict[str, Any]) -> dict[str, Any] | None:
         "exchange_raw_score": row.get("exchange_raw_score", 0),
         "exchange_source": row.get("exchange_source", "cached"),
         "listed_exchanges": row.get("listed_exchanges", []),
+        "exchange_listing_details": row.get("exchange_listing_details") or exchange_listing_details(row),
     }
 
 
@@ -755,26 +1104,36 @@ def dashboard_rows(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows = []
     for row in latest.values():
         progress = cached_exchange_progress(row) or exchange_progress(row.get("roadmap_events", []))
+        pre_tge_progress = pre_tge_exchange_progress_from_db(row)
+        detail_row = {**row, **progress}
+        listing_details = progress.get("exchange_listing_details") or exchange_listing_details(detail_row)
+        assessment = {**row, **progress, **pre_tge_progress, "exchange_listing_details": listing_details}
+        refresh_total_score(assessment)
         rows.append(
             {
                 "token_ticker": row.get("token_ticker") or row.get("project_name") or row.get("x_handle") or "--",
                 "project_name": row.get("project_name", ""),
                 "x_handle": row.get("x_handle", ""),
                 "rootdata_url": row.get("rootdata_url", ""),
-                "total_score": row.get("total_score", 0),
+                "total_score": assessment.get("total_score", 0),
                 "team_score": row.get("team_score", 0),
                 "funding_score": row.get("funding_score", 0),
+                "investor_score": row.get("investor_score", 0),
                 "social_score": row.get("social_score", 0),
+                "chain_score": row.get("chain_score", 0),
+                "investors": row.get("investors", []),
+                "chains": row.get("chains", []),
                 "tge_status": row.get("tge_status", ""),
                 "tge_probability": row.get("tge_probability", 0),
                 "tge_date": row.get("tge_date", ""),
                 "tge_method": row.get("tge_method", ""),
                 "roadmap_events": row.get("roadmap_events", []),
                 **progress,
-                "assessment": row,
+                **pre_tge_progress,
+                "exchange_listing_details": listing_details,
+                "assessment": assessment,
             }
         )
-        rows[-1]["assessment"] = {**row, **progress}
         rows[-1]["tge_status"] = rows[-1]["assessment"].get("tge_status", rows[-1]["tge_status"])
         rows[-1]["tge_probability"] = rows[-1]["assessment"].get("tge_probability", rows[-1]["tge_probability"])
         rows[-1]["tge_date"] = rows[-1]["assessment"].get("tge_date", rows[-1]["tge_date"])
@@ -805,7 +1164,12 @@ def request_dashboard_rows(requests: list[dict[str, Any]], history: list[dict[st
                 "total_score": "",
                 "team_score": "",
                 "funding_score": "",
+                "investor_score": "",
                 "social_score": "",
+                "chain_score": "",
+                "pre_tge_exchange_score": "",
+                "investors": [],
+                "chains": [],
                 "tge_status": status,
                 "tge_probability": 0,
                 "tge_date": "",
@@ -814,6 +1178,7 @@ def request_dashboard_rows(requests: list[dict[str, Any]], history: list[dict[st
                 "exchange_score": 0,
                 "exchange_progress": 0,
                 "exchange_raw_score": 0,
+                "pre_tge_exchange_score": 0,
                 "exchange_source": "request_queue",
                 "listed_exchanges": [],
                 "request_id": request.get("request_id", ""),
@@ -904,6 +1269,35 @@ def request_status_payload(
     return {"ok": True, "request": request, "assessment": assessment}
 
 
+def run_exchange_listing_manual_sync(data: dict[str, Any]) -> dict[str, Any]:
+    limit = int(data.get("limit") or 30)
+    max_pages = int(data.get("max_pages") or 3)
+
+    def fetcher(exchange, *, mode, months):
+        return fetch_live_sources(exchange, mode=mode, months=months, limit=limit, max_pages=max_pages)
+
+    return run_sync(
+        ROOT / "data" / "exchange_listings.sqlite",
+        trigger_type="manual",
+        mode="incremental",
+        months=3,
+        exchanges=data.get("exchanges"),
+        fetcher=fetcher,
+    )
+
+
+def handle_post_api(path: str, data: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    if path == "/api/request":
+        return 200, create_project_request(data)
+    if path == "/api/score":
+        return 200, score_payload(data)
+    if path == "/api/project/delete":
+        return 200, delete_project_data(data)
+    if path == "/api/exchange-listings/sync":
+        return 200, run_exchange_listing_manual_sync(data)
+    return 404, {"ok": False, "error": "not found"}
+
+
 class CryptoScoringHandler(BaseHTTPRequestHandler):
     server_version = "CryptoScoringWeb/0.1"
 
@@ -930,15 +1324,15 @@ class CryptoScoringHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path not in {"/api/score", "/api/request"}:
+        if parsed.path not in {"/api/score", "/api/request", "/api/project/delete", "/api/exchange-listings/sync"}:
             self.send_error(404)
             return
         try:
             length = int(self.headers.get("content-length", "0"))
             raw = self.rfile.read(length).decode("utf-8")
             data = json.loads(raw or "{}")
-            result = create_project_request(data) if parsed.path == "/api/request" else score_payload(data)
-            self.send_json(result)
+            status, result = handle_post_api(parsed.path, data)
+            self.send_json(result, status=status)
         except Exception as exc:
             self.send_json({"ok": False, "error": str(exc)}, status=400)
 
@@ -960,6 +1354,7 @@ class CryptoScoringHandler(BaseHTTPRequestHandler):
         body = requested.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.bella.exchange-listing-sync</string>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/apple/Documents/New project</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/apple/Documents/New project/exchange_listing_sync.py</string>
+    <string>--mode</string>
+    <string>incremental</string>
+    <string>--live</string>
+    <string>--limit</string>
+    <string>30</string>
+    <string>--max-pages</string>
+    <string>3</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StartInterval</key>
+  <integer>86400</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Users/apple/Documents/New project/logs/exchange_listing_sync.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/apple/Documents/New project/logs/exchange_listing_sync.err.log</string>
+</dict>
+</plist>

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>加密项目调研评分</title>
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <main class="app-frame">
@@ -65,16 +65,14 @@
                 <tr>
                   <th>Token Symbol</th>
                   <th>项目名</th>
-                  <th>总分</th>
-                  <th>团队</th>
-                  <th>融资</th>
-                  <th>社媒</th>
-                  <th>TGE</th>
-                  <th>上线交易所</th>
+                  <th>基本面总分</th>
+                  <th>基本面拆分</th>
+                  <th>TGE 日期</th>
+                  <th>上线交易所情况</th>
                 </tr>
               </thead>
               <tbody id="dashboardRows">
-                <tr><td colspan="8">暂无项目。</td></tr>
+                <tr><td colspan="6">暂无项目。</td></tr>
               </tbody>
             </table>
           </div>
@@ -89,28 +87,45 @@
             <span class="eyebrow">评分输出</span>
             <h2 data-field="tokenTicker">--</h2>
             <p data-field="projectMeta">--</p>
+            <button type="button" class="danger-button" data-action="deleteProject">删除项目</button>
           </div>
           <div class="total-score">
-            <span data-field="totalScore">--</span>
-            <small>项目总分 / 100</small>
+            <span class="total-score-ring" aria-hidden="true"></span>
+            <strong data-field="totalScore">--</strong>
+            <small>基本面总分 / 100</small>
           </div>
         </section>
 
         <section class="score-strip">
           <article>
-            <span>团队分 <em>计入总分 30%</em></span>
+            <span>团队分 <em>计入总分 25%</em></span>
             <strong data-field="teamScore">--</strong>
             <small data-field="teamReason">--</small>
           </article>
           <article>
-            <span>融资分 <em>计入总分 40%</em></span>
+            <span>融资分 <em>计入总分 20%</em></span>
             <strong data-field="fundingScore">--</strong>
             <small data-field="fundingReason">--</small>
           </article>
           <article>
-            <span>社媒分 <em>计入总分 30%</em></span>
+            <span>投资方 <em>计入总分 15%</em></span>
+            <strong data-field="investorScore">--</strong>
+            <small data-field="investorReason">--</small>
+          </article>
+          <article>
+            <span>社媒分 <em>计入总分 20%</em></span>
             <strong data-field="socialScore">--</strong>
             <small data-field="socialReason">--</small>
+          </article>
+          <article>
+            <span>链生态 <em>计入总分 5%</em></span>
+            <strong data-field="chainScore">--</strong>
+            <small data-field="chainReason">--</small>
+          </article>
+          <article>
+            <span>TGE前交易所 <em>计入总分 15%</em></span>
+            <strong data-field="preTgeExchangeScore">--</strong>
+            <small data-field="exchangeReason">--</small>
           </article>
         </section>
 
@@ -138,7 +153,7 @@
 
           <article class="report-section wide">
             <div class="section-title">
-              <h3>上线交易所</h3>
+              <h3>交易所上线情况</h3>
               <span>按时间排序</span>
             </div>
             <div data-field="roadmapList" class="timeline-list"></div>
@@ -147,6 +162,6 @@
       </section>
     </template>
 
-    <script src="/app.js"></script>
+    <script src="./app.js?v=20260602-exchange-name-display"></script>
   </body>
 </html>

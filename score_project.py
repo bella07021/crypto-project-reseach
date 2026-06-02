@@ -12,15 +12,23 @@ from xml.sax.saxutils import escape
 from project_scorer import (
     WEIGHTS,
     calculate_funding_score,
+    calculate_funding_age_multiplier,
+    calculate_funding_amount_bonus,
+    calculate_funding_rank_score,
+    calculate_sector_funding_score,
+    calculate_chain_score,
+    calculate_investor_score,
     calculate_social_percentile,
     calculate_team_score,
     calculate_total_score,
     parse_followers,
 )
-from live_project_fetcher import fetch_live_project_detail, normalize_rootdata_url
+from live_project_fetcher import fetch_live_project_detail, normalize_rootdata_url, parse_project_chains
 
 
 DEFAULT_BENCHMARK_CSV = Path("output/rootdata_projects_x_enriched_fullv2.csv")
+DEFAULT_FUNDRAISING_CSV = Path("output/rootdata_fundraising/rootdata_fundraising_by_sector.csv")
+TRACKED_FUNDRAISING_CSV = Path("data/rootdata_fundraising_by_sector.csv")
 DEFAULT_WORKBOOK = Path("output/crypto_project_scores.xlsx")
 
 
@@ -39,6 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--listing-signal", action="append", default=[])
     parser.add_argument("--evidence-note", action="append", default=[])
     parser.add_argument("--benchmark-csv", type=Path, default=DEFAULT_BENCHMARK_CSV)
+    parser.add_argument("--fundraising-csv", type=Path, default=DEFAULT_FUNDRAISING_CSV)
     parser.add_argument("--workbook", type=Path, default=DEFAULT_WORKBOOK)
     parser.add_argument("--today", help="Override today's date in YYYY-MM-DD format.")
     parser.add_argument("--no-live", action="store_true", help="Disable live RootData/X fetching.")
@@ -52,6 +61,15 @@ def load_benchmarks(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(handle))
 
 
+def fundraising_csv_path(args: argparse.Namespace) -> Path:
+    explicit = getattr(args, "fundraising_csv", None)
+    if explicit:
+        return Path(explicit)
+    if DEFAULT_FUNDRAISING_CSV.exists():
+        return DEFAULT_FUNDRAISING_CSV
+    return TRACKED_FUNDRAISING_CSV
+
+
 def normalize_handle(handle: str) -> str:
     return handle.strip().lstrip("@").lower()
 
@@ -60,6 +78,20 @@ def parse_date(value: str | None) -> date | None:
     if not value:
         return None
     return date.fromisoformat(value)
+
+
+def parse_float(value: object) -> float | None:
+    if value in {None, ""}:
+        return None
+    try:
+        return float(str(value).replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_int(value: object) -> int | None:
+    parsed = parse_float(value)
+    return int(parsed) if parsed is not None else None
 
 
 def find_project_row(rows: Iterable[dict[str, str]], x_handle: str, rootdata_url: str) -> dict[str, str] | None:
@@ -74,9 +106,156 @@ def find_project_row(rows: Iterable[dict[str, str]], x_handle: str, rootdata_url
     return None
 
 
+def normalized_name(value: str) -> str:
+    return "".join(ch for ch in value.lower() if ch.isalnum())
+
+
+def related_project_name(left: str, right: str) -> bool:
+    left_name = normalized_name(left)
+    right_name = normalized_name(right)
+    if not left_name or not right_name:
+        return False
+    return left_name == right_name or left_name in right_name or right_name in left_name
+
+
+def split_investors(value: str) -> list[str]:
+    investors: list[str] = []
+    seen: set[str] = set()
+    for item in value.replace("；", ";").replace("|", ";").split(";"):
+        name = item.strip()
+        key = name.lower()
+        if not name or key in seen:
+            continue
+        seen.add(key)
+        investors.append(name)
+    return investors
+
+
+def find_fundraising_rows(
+    rows: Iterable[dict[str, str]],
+    *,
+    token_ticker: str,
+    project_name: str,
+    rootdata_url: str,
+) -> list[dict[str, str]]:
+    wanted_token = token_ticker.strip().upper()
+    wanted_name = project_name.strip()
+    wanted_url = normalize_rootdata_url(rootdata_url)
+    matches: list[dict[str, str]] = []
+    for row in rows:
+        row_token = row.get("token_symbol", "").strip().upper()
+        row_names = [row.get("project_name", ""), row.get("project_name_en", "")]
+        row_url = normalize_rootdata_url(row.get("project_url", ""))
+        token_match = bool(wanted_token and row_token == wanted_token)
+        name_match = any(related_project_name(wanted_name, row_name) for row_name in row_names)
+        url_match = bool(wanted_url and row_url == wanted_url)
+        if url_match or (token_match and (name_match or not project_name.strip())):
+            matches.append(row)
+    return matches
+
+
+def fundraising_investors(rows: Iterable[dict[str, str]]) -> list[str]:
+    investors: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        for investor in split_investors(row.get("investors", "")):
+            key = investor.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            investors.append(investor)
+    return investors
+
+
+def benchmark_chain_tags(project_row: dict[str, str]) -> list[str]:
+    if not project_row:
+        return []
+    values = [
+        project_row.get("rootdata_subtags", ""),
+        project_row.get("ecosystem", ""),
+        project_row.get("description", ""),
+    ]
+    return parse_project_chains([], " ".join(value for value in values if value and value != "--"))
+
+
+def same_fundraising_sector(left: dict[str, str], right: dict[str, str]) -> bool:
+    for key in ("sector_id", "sector_cn", "sector_en"):
+        left_value = str(left.get(key, "")).strip().lower()
+        right_value = str(right.get(key, "")).strip().lower()
+        if left_value and right_value and left_value == right_value:
+            return True
+    return False
+
+
+def sector_amounts(fundraising_rows: Iterable[dict[str, str]], sector_row: dict[str, str]) -> list[float]:
+    amounts: list[float] = []
+    for row in fundraising_rows:
+        if not same_fundraising_sector(row, sector_row):
+            continue
+        amount = parse_float(row.get("amount_usd"))
+        if amount and amount > 0:
+            amounts.append(amount)
+    return amounts
+
+
+def best_sector_funding_match(
+    matched_rows: Iterable[dict[str, str]],
+    fundraising_rows: Iterable[dict[str, str]],
+    *,
+    today: date,
+) -> tuple[dict[str, str] | None, dict[str, float | int | str]]:
+    best_row: dict[str, str] | None = None
+    best_components: dict[str, float | int | str] = {}
+    all_rows = list(fundraising_rows)
+    for row in matched_rows:
+        rank = parse_int(row.get("sector_rank"))
+        if not rank:
+            continue
+        amount = parse_float(row.get("amount_usd"))
+        funding_date = parse_date(row.get("funding_date"))
+        amounts = sector_amounts(all_rows, row)
+        score = calculate_sector_funding_score(
+            sector_rank=rank,
+            amount_usd=amount,
+            sector_amounts_usd=amounts,
+            funding_date=funding_date,
+            today=today,
+        )
+        components: dict[str, float | int | str] = {
+            "score": score,
+            "rank_score": calculate_funding_rank_score(rank),
+            "amount_bonus": calculate_funding_amount_bonus(amount, amounts),
+            "age_multiplier": calculate_funding_age_multiplier(funding_date, today=today),
+            "sector_rank": rank,
+            "sector": row.get("sector_cn") or row.get("sector_en") or "",
+        }
+        if best_row is None or score > float(best_components.get("score", 0)):
+            best_row = row
+            best_components = components
+    return best_row, best_components
+
+
+def merge_investors(primary: Iterable[str], fallback: Iterable[str]) -> tuple[list[str], list[str]]:
+    investors: list[str] = []
+    added_from_fallback: list[str] = []
+    seen: set[str] = set()
+    for source_name, names in (("primary", primary), ("fallback", fallback)):
+        for name in names:
+            investor = name.strip()
+            key = investor.lower()
+            if not investor or key in seen:
+                continue
+            seen.add(key)
+            investors.append(investor)
+            if source_name == "fallback":
+                added_from_fallback.append(investor)
+    return investors, added_from_fallback
+
+
 def build_assessment(args: argparse.Namespace) -> dict[str, object]:
     benchmarks = load_benchmarks(args.benchmark_csv)
     project_row = find_project_row(benchmarks, args.x_handle, args.rootdata_url) or {}
+    fundraising_rows = load_benchmarks(fundraising_csv_path(args))
     live_detail = (
         None
         if args.no_live
@@ -104,25 +283,76 @@ def build_assessment(args: argparse.Namespace) -> dict[str, object]:
         else ((live_detail.team_background if live_detail else "") or "unknown")
     )
 
+    project_name_for_matching = (
+        str(getattr(args, "project_name", "") or "").strip()
+        or (live_detail.project_name if live_detail and live_detail.project_name else project_row.get("project_name", ""))
+    )
+    token_ticker_for_matching = (
+        str(getattr(args, "token_ticker", "") or "").strip().upper()
+        or (live_detail.token_ticker if live_detail and live_detail.token_ticker else project_row.get("token_symbol", ""))
+    )
+    matched_fundraising_rows = find_fundraising_rows(
+        fundraising_rows,
+        token_ticker=token_ticker_for_matching,
+        project_name=project_name_for_matching,
+        rootdata_url=args.rootdata_url,
+    )
+    sector_funding_row, sector_funding_components = best_sector_funding_match(
+        matched_fundraising_rows,
+        fundraising_rows,
+        today=today,
+    )
+    if sector_funding_row:
+        row_amount = parse_float(sector_funding_row.get("amount_usd"))
+        row_date = parse_date(sector_funding_row.get("funding_date"))
+        funding_amount = row_amount or funding_amount
+        funding_date = row_date or funding_date
+
     team_score = calculate_team_score(team_raw_score, team_background)
-    funding_score = calculate_funding_score(funding_amount, funding_date, today=today)
+    funding_score = (
+        float(sector_funding_components["score"])
+        if sector_funding_components
+        else calculate_funding_score(funding_amount, funding_date, today=today)
+    )
     social_score = calculate_social_percentile(benchmarks, bucket, followers)
-    total_score = calculate_total_score(team_score, funding_score, social_score)
+    investors, fundraising_investors_added = merge_investors(
+        live_detail.investors if live_detail else [],
+        fundraising_investors(matched_fundraising_rows),
+    )
+    chains = (live_detail.chains if live_detail else []) or benchmark_chain_tags(project_row)
+    investor_score = calculate_investor_score(investors)
+    chain_score = calculate_chain_score(chains)
+    pre_tge_exchange_score = 0.0
+    total_score = calculate_total_score(
+        team_score,
+        funding_score,
+        social_score,
+        investor_score,
+        chain_score,
+        pre_tge_exchange_score,
+    )
     evidence_notes = list(args.evidence_note)
     if live_detail:
         evidence_notes.extend(live_detail.evidence_notes)
+    if fundraising_investors_added:
+        evidence_notes.append(f"RootData fundraising investors: {', '.join(fundraising_investors_added)}")
+    if sector_funding_row:
+        evidence_notes.append(
+            "RootData sector funding rank: "
+            f"{sector_funding_components.get('sector')} #{sector_funding_components.get('sector_rank')}, "
+            f"amount bonus {sector_funding_components.get('amount_bonus')}, "
+            f"age multiplier {sector_funding_components.get('age_multiplier')}"
+        )
 
     return {
         "assessed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "x_handle": (live_detail.x_handle if live_detail and live_detail.x_handle else args.x_handle.strip().lstrip("@")),
         "rootdata_url": args.rootdata_url,
         "project_name": (
-            str(getattr(args, "project_name", "") or "").strip()
-            or (live_detail.project_name if live_detail and live_detail.project_name else project_row.get("project_name", ""))
+            project_name_for_matching
         ),
         "token_ticker": (
-            str(getattr(args, "token_ticker", "") or "").strip().upper()
-            or (live_detail.token_ticker if live_detail and live_detail.token_ticker else project_row.get("token_symbol", ""))
+            token_ticker_for_matching
         ),
         "bucket": bucket,
         "x_followers": followers or 0,
@@ -138,7 +368,17 @@ def build_assessment(args: argparse.Namespace) -> dict[str, object]:
         "funding_date": funding_date.isoformat() if funding_date else "",
         "funding_rounds": live_detail.funding_rounds if live_detail else [],
         "funding_score": funding_score,
+        "funding_sector": sector_funding_components.get("sector", "") if sector_funding_components else "",
+        "funding_sector_rank": sector_funding_components.get("sector_rank", "") if sector_funding_components else "",
+        "funding_rank_score": sector_funding_components.get("rank_score", "") if sector_funding_components else "",
+        "funding_amount_bonus": sector_funding_components.get("amount_bonus", "") if sector_funding_components else "",
+        "funding_age_multiplier": sector_funding_components.get("age_multiplier", "") if sector_funding_components else "",
+        "investors": investors,
+        "investor_score": investor_score,
         "social_score": social_score,
+        "chains": chains,
+        "chain_score": chain_score,
+        "pre_tge_exchange_score": pre_tge_exchange_score,
         "total_score": total_score,
         "tge_signals": args.tge_signal,
         "listing_signals": args.listing_signal,
@@ -227,12 +467,22 @@ def make_score_rows(history: list[dict[str, object]]) -> list[list[object]]:
         "x_followers",
         "team_score",
         "funding_score",
+        "investor_score",
         "social_score",
+        "chain_score",
+        "pre_tge_exchange_score",
         "total_score",
         "team_background",
         "funding_amount_usd",
         "funding_total_usd",
         "funding_date",
+        "funding_sector",
+        "funding_sector_rank",
+        "funding_rank_score",
+        "funding_amount_bonus",
+        "funding_age_multiplier",
+        "investors",
+        "chains",
         "fetch_status",
         "website",
         "location",
@@ -243,7 +493,13 @@ def make_score_rows(history: list[dict[str, object]]) -> list[list[object]]:
         key = normalize_rootdata_url(str(row.get("rootdata_url", ""))) or normalize_handle(str(row.get("x_handle", "")))
         latest_by_project[key] = row
     latest_rows = sorted(latest_by_project.values(), key=lambda row: str(row.get("assessed_at", "")), reverse=True)
-    return [headers] + [[row.get(header, "") for header in headers] for row in latest_rows]
+    return [headers] + [
+        [
+            " | ".join(row.get(header, [])) if header in {"investors", "chains"} and isinstance(row.get(header), list) else row.get(header, "")
+            for header in headers
+        ]
+        for row in latest_rows
+    ]
 
 
 def make_evidence_rows(history: list[dict[str, object]]) -> list[list[object]]:
@@ -314,11 +570,21 @@ def make_config_rows() -> list[list[object]]:
         ["key", "value"],
         ["team_weight", WEIGHTS["team"]],
         ["funding_weight", WEIGHTS["funding"]],
+        ["investor_weight", WEIGHTS["investor"]],
         ["social_weight", WEIGHTS["social"]],
+        ["chain_weight", WEIGHTS["chain"]],
+        ["pre_tge_exchange_weight", WEIGHTS["pre_tge_exchange"]],
         ["pure_chinese_team_multiplier", 0.3],
         ["funding_full_amount_usd", 500_000_000],
         ["funding_full_recency_days", 365],
-        ["tge_signals_affect_total_score", "false"],
+        ["sector_funding_rank_max_score", 90],
+        ["sector_funding_amount_bonus_max", 10],
+        ["sector_funding_age_multiplier_0_365_days", 1.0],
+        ["sector_funding_age_multiplier_366_730_days", 0.85],
+        ["sector_funding_age_multiplier_731_1095_days", 0.65],
+        ["sector_funding_age_multiplier_over_1095_days", 0.45],
+        ["binance_alpha_affects_pre_tge_exchange_score", "false"],
+        ["yzi_labs_affects_pre_tge_exchange_score", "false"],
     ]
 
 

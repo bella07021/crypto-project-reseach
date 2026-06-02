@@ -1,4 +1,5 @@
 import unittest
+import argparse
 import csv
 import json
 import subprocess
@@ -9,12 +10,16 @@ from pathlib import Path
 from unittest.mock import patch
 
 from project_scorer import (
+    calculate_chain_score,
     calculate_funding_score,
+    calculate_investor_score,
+    calculate_sector_funding_score,
     calculate_social_percentile,
     calculate_team_score,
     calculate_total_score,
 )
 from live_project_fetcher import (
+    LiveProjectDetail,
     enrich_team_members_from_linkedin,
     fetch_live_project_detail,
     fetch_x_signal_htmls,
@@ -25,7 +30,7 @@ from live_project_fetcher import (
     rootdata_fetch_urls,
     supplement_tge_evidence_from_x_html,
 )
-from score_project import make_funding_round_rows, make_roadmap_event_rows, make_score_rows
+from score_project import build_assessment, make_funding_round_rows, make_roadmap_event_rows, make_score_rows
 
 
 class ProjectScorerTests(unittest.TestCase):
@@ -45,10 +50,10 @@ class ProjectScorerTests(unittest.TestCase):
         <p>Massively-parallelized proof mining network</p>
         <a href="https://www.nexus.xyz/">nexus.xyz</a>
         <a href="https://x.com/nexuslabs">X</a>
-        <span>Tags</span><span>Infra</span><span>zk</span>
+        <span>Tags</span><span>Infra</span><span>zk</span><span>Base</span>
         <span>Founded</span><span>2022</span>
         <span>Location</span><span>United States</span>
-        <script>self.__next_f.push([1,"\\"milestones\\":[{\\"facAmountUs\\":2200000,\\"facDate\\":\\"2022-12-01 00:00:00\\",\\"roundsName\\":{\\"en_value\\":\\"Seed\\",\\"cn_value\\":\\"种子轮\\"},\\"desc\\":{\\"en_value\\":\\"Nexus raised $ 2.2 M in Seed round\\"}},{\\"facAmountUs\\":25000000,\\"facDate\\":\\"2024-06-10 00:00:00\\",\\"roundsName\\":{\\"en_value\\":\\"Series A\\",\\"cn_value\\":\\"A轮\\"},\\"desc\\":{\\"en_value\\":\\"Nexus raised $ 25 M in Series A round\\"}}]"])</script>
+        <script>self.__next_f.push([1,"\\"milestones\\":[{\\"facAmountUs\\":2200000,\\"facDate\\":\\"2022-12-01 00:00:00\\",\\"roundsName\\":{\\"en_value\\":\\"Seed\\",\\"cn_value\\":\\"种子轮\\"},\\"desc\\":{\\"en_value\\":\\"Nexus raised $ 2.2 M in Seed round led by YZi Labs\\"}},{\\"facAmountUs\\":25000000,\\"facDate\\":\\"2024-06-10 00:00:00\\",\\"roundsName\\":{\\"en_value\\":\\"Series A\\",\\"cn_value\\":\\"A轮\\"},\\"desc\\":{\\"en_value\\":\\"Nexus raised $ 25 M in Series A round with Coinbase Ventures\\"}}]"])</script>
         <script>self.__next_f.push([1,"\\"hapDate\\":\\"2026-05-20 00:00:00\\",\\"oName\\":{\\"en_value\\":\\"Coinbase listed Nexus（NEX）\\",\\"cn_value\\":\\"Coinbase 上线 Nexus（NEX）\\"},\\"siteUrl\\":\\"https://x.com/CoinbaseMarkets/status/2057085756120748167\\",\\"type\\":15"])</script>
         <script>self.__next_f.push([1,"\\"hapDate\\":\\"2026-05-20 00:00:00\\",\\"oName\\":{\\"en_value\\":\\"NEX is live for trading\\",\\"cn_value\\":\\"NEX 代币正式上线\\"},\\"siteUrl\\":\\"https://x.com/nexuslabs/status/2057000000000000000\\",\\"type\\":1"])</script>
         <div>Jun 10, 2024</div><span>Nexus raised $ 25 M in Series A round</span>
@@ -69,6 +74,8 @@ class ProjectScorerTests(unittest.TestCase):
         self.assertEqual(detail.funding_rounds[1]["round"], "Series A")
         self.assertEqual(detail.funding_rounds[1]["amount_usd"], 25_000_000)
         self.assertEqual(detail.funding_total_usd, 27_200_000)
+        self.assertEqual(detail.investors, ["Coinbase Ventures", "YZi Labs"])
+        self.assertIn("Base", detail.chains)
         self.assertEqual(detail.tge_status, "已 TGE")
         self.assertEqual(detail.tge_probability, 100)
         self.assertEqual(str(detail.tge_date), "2026-05-20")
@@ -535,6 +542,16 @@ class ProjectScorerTests(unittest.TestCase):
         )
         self.assertAlmostEqual(score, 50.21, places=2)
 
+    def test_sector_funding_score_uses_rank_amount_bonus_and_age_penalty(self):
+        score = calculate_sector_funding_score(
+            sector_rank=20,
+            amount_usd=50_000_000,
+            sector_amounts_usd=[1_000_000, 10_000_000, 50_000_000, 100_000_000],
+            funding_date=date(2025, 5, 1),
+            today=date(2026, 6, 2),
+        )
+        self.assertAlmostEqual(score, 71.12, places=2)
+
     def test_social_percentile_uses_same_bucket_followers(self):
         rows = [
             {"bucket": "infra", "x_followers": "100"},
@@ -544,9 +561,244 @@ class ProjectScorerTests(unittest.TestCase):
         ]
         self.assertEqual(calculate_social_percentile(rows, "infra", 300), 50.0)
 
-    def test_tge_signals_do_not_affect_total_score(self):
-        total = calculate_total_score(team_score=80, funding_score=70, social_score=60)
-        self.assertEqual(total, 70.0)
+    def test_new_total_score_uses_investor_chain_and_pre_tge_exchange_components(self):
+        total = calculate_total_score(
+            team_score=80,
+            funding_score=70,
+            social_score=60,
+            investor_score=90,
+            chain_score=100,
+            pre_tge_exchange_score=95,
+        )
+        self.assertEqual(total, 78.75)
+
+    def test_investor_and_chain_scores_prioritize_approved_signals(self):
+        self.assertEqual(calculate_investor_score(["YZi Labs"]), 90.0)
+        self.assertEqual(calculate_investor_score(["YZi Labs", "Coinbase Ventures"]), 100.0)
+        self.assertEqual(calculate_chain_score(["Base"]), 100.0)
+        self.assertEqual(calculate_chain_score(["Solana"]), 95.0)
+
+    def test_build_assessment_merges_rootdata_fundraising_investors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            benchmark = tmp_path / "benchmark.csv"
+            fundraising = tmp_path / "fundraising.csv"
+            workbook = tmp_path / "scores.xlsx"
+            with benchmark.open("w", encoding="utf-8", newline="") as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=[
+                        "bucket",
+                        "project_name",
+                        "token_symbol",
+                        "project_url",
+                        "x_handle",
+                        "x_followers",
+                    ],
+                )
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "bucket": "infra",
+                        "project_name": "Billions",
+                        "token_symbol": "BILL",
+                        "project_url": "https://cn.rootdata.com/Projects/detail/Billions?k=MTY1NDQ%3D",
+                        "x_handle": "billions_ntwk",
+                        "x_followers": "524834",
+                    }
+                )
+            with fundraising.open("w", encoding="utf-8", newline="") as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=[
+                        "project_name",
+                        "project_name_en",
+                        "token_symbol",
+                        "amount_usd",
+                        "funding_date",
+                        "sector_cn",
+                        "sector_en",
+                        "sector_rank",
+                        "investors",
+                        "project_url",
+                    ],
+                )
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "project_name": "Billions",
+                        "project_name_en": "Billions",
+                        "token_symbol": "BILL",
+                        "amount_usd": "30000000",
+                        "funding_date": "2025-07-30",
+                        "sector_cn": "基础设施",
+                        "sector_en": "Infra",
+                        "sector_rank": "18",
+                        "investors": "Coinbase Ventures; Liberty City Ventures; Polychain",
+                        "project_url": "https://cn.rootdata.com/Projects/detail/Billions?k=16544",
+                    }
+                )
+                writer.writerow(
+                    {
+                        "project_name": "Infra Peer",
+                        "project_name_en": "Infra Peer",
+                        "token_symbol": "PEER",
+                        "amount_usd": "1000000",
+                        "funding_date": "2026-01-01",
+                        "sector_cn": "基础设施",
+                        "sector_en": "Infra",
+                        "sector_rank": "50",
+                        "investors": "Example Ventures",
+                        "project_url": "https://cn.rootdata.com/Projects/detail/Infra%20Peer?k=1",
+                    }
+                )
+                writer.writerow(
+                    {
+                        "project_name": "Infra Whale",
+                        "project_name_en": "Infra Whale",
+                        "token_symbol": "WHALE",
+                        "amount_usd": "100000000",
+                        "funding_date": "2026-01-01",
+                        "sector_cn": "基础设施",
+                        "sector_en": "Infra",
+                        "sector_rank": "80",
+                        "investors": "Example Ventures",
+                        "project_url": "https://cn.rootdata.com/Projects/detail/Infra%20Whale?k=2",
+                    }
+                )
+            args = argparse.Namespace(
+                x_handle="billions_ntwk",
+                rootdata_url="https://cn.rootdata.com/Projects/detail/Billions?k=MTY1NDQ%3D",
+                token_ticker="BILL",
+                project_name="Billions Network",
+                team_raw_score=80,
+                team_background="international",
+                funding_amount_usd=0,
+                funding_date=None,
+                bucket="",
+                tge_signal=[],
+                listing_signal=[],
+                evidence_note=[],
+                benchmark_csv=benchmark,
+                fundraising_csv=fundraising,
+                workbook=workbook,
+                today="2026-06-02",
+                no_live=False,
+                rootdata_html="",
+            )
+            live_detail = LiveProjectDetail(
+                project_name="Billions",
+                token_ticker="BILL",
+                x_handle="billions_ntwk",
+                bucket="infra",
+                x_followers=524834,
+                latest_funding_amount_usd=30_000_000,
+                latest_funding_date=date(2025, 7, 30),
+                team_raw_score=80,
+                team_background="international",
+                investors=["Coinbase Ventures"],
+                fetch_status="ok",
+            )
+
+            with patch("score_project.fetch_live_project_detail", return_value=live_detail):
+                assessment = build_assessment(args)
+
+            self.assertEqual(
+                assessment["investors"],
+                ["Coinbase Ventures", "Liberty City Ventures", "Polychain"],
+            )
+            self.assertEqual(assessment["funding_sector"], "基础设施")
+            self.assertEqual(assessment["funding_sector_rank"], 18)
+            self.assertEqual(assessment["funding_amount_bonus"], 5.0)
+            self.assertEqual(assessment["funding_age_multiplier"], 1.0)
+            self.assertAlmostEqual(assessment["funding_score"], 83.0, places=2)
+            self.assertGreater(assessment["investor_score"], 0)
+            self.assertIn(
+                "RootData fundraising investors: Liberty City Ventures, Polychain",
+                assessment["evidence_notes"],
+            )
+
+    def test_build_assessment_uses_deployable_fundraising_snapshot_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            benchmark = tmp_path / "benchmark.csv"
+            fundraising = tmp_path / "data_fundraising.csv"
+            workbook = tmp_path / "scores.xlsx"
+            benchmark.write_text(
+                "bucket,project_name,token_symbol,project_url,x_handle,x_followers\n"
+                "infra,Billions,BILL,https://cn.rootdata.com/Projects/detail/Billions?k=MTY1NDQ%3D,billions_ntwk,524834\n",
+                encoding="utf-8",
+            )
+            fundraising.write_text(
+                "project_name,project_name_en,token_symbol,amount_usd,funding_date,sector_cn,sector_en,sector_rank,investors,project_url\n"
+                "Billions,Billions,BILL,30000000,2025-07-30,DID,DID,5,Coinbase Ventures; Polychain,https://cn.rootdata.com/Projects/detail/Billions?k=16544\n",
+                encoding="utf-8",
+            )
+            args = argparse.Namespace(
+                x_handle="billions_ntwk",
+                rootdata_url="https://cn.rootdata.com/projects/detail/Billions?k=M",
+                token_ticker="BILL",
+                project_name="Billions Network",
+                team_raw_score=85,
+                team_background="international",
+                funding_amount_usd=30_000_000,
+                funding_date="2025-07-30",
+                bucket="infra",
+                tge_signal=[],
+                listing_signal=[],
+                evidence_note=[],
+                benchmark_csv=benchmark,
+                workbook=workbook,
+                today="2026-06-02",
+                no_live=True,
+                rootdata_html="",
+            )
+
+            with patch("score_project.DEFAULT_FUNDRAISING_CSV", tmp_path / "missing.csv"), patch(
+                "score_project.TRACKED_FUNDRAISING_CSV", fundraising, create=True
+            ):
+                assessment = build_assessment(args)
+
+            self.assertEqual(assessment["funding_sector"], "DID")
+            self.assertEqual(assessment["funding_sector_rank"], 5)
+            self.assertGreater(assessment["funding_score"], 90)
+            self.assertEqual(assessment["investor_score"], 100.0)
+
+    def test_build_assessment_uses_benchmark_ecosystem_tags_for_chain_score(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            benchmark = tmp_path / "benchmark.csv"
+            workbook = tmp_path / "scores.xlsx"
+            benchmark.write_text(
+                "bucket,project_name,token_symbol,rootdata_subtags,ecosystem,description,project_url,x_handle,x_followers\n"
+                "infra,Billions,BILL,基础设施、zk、AI、DID、隐私,--,数字身份验证平台,https://cn.rootdata.com/Projects/detail/Billions?k=MTY1NDQ%3D,billions_ntwk,524834\n",
+                encoding="utf-8",
+            )
+            args = argparse.Namespace(
+                x_handle="billions_ntwk",
+                rootdata_url="https://cn.rootdata.com/projects/detail/Billions?k=M",
+                token_ticker="BILL",
+                project_name="Billions Network",
+                team_raw_score=85,
+                team_background="international",
+                funding_amount_usd=30_000_000,
+                funding_date="2025-07-30",
+                bucket="infra",
+                tge_signal=[],
+                listing_signal=[],
+                evidence_note=[],
+                benchmark_csv=benchmark,
+                fundraising_csv=tmp_path / "missing_fundraising.csv",
+                workbook=workbook,
+                today="2026-06-02",
+                no_live=True,
+                rootdata_html="",
+            )
+
+            assessment = build_assessment(args)
+
+            self.assertEqual(assessment["chains"], ["ZK"])
+            self.assertEqual(assessment["chain_score"], 80.0)
 
     def test_cli_writes_workbook_and_prints_json(self):
         with tempfile.TemporaryDirectory() as tmp:

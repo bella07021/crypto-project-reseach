@@ -16,7 +16,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
-from project_scorer import parse_followers
+from project_scorer import STRONG_INVESTOR_KEYWORDS, TOP_INVESTOR_KEYWORDS, parse_followers
 
 
 USER_AGENT = (
@@ -70,6 +70,8 @@ class LiveProjectDetail:
     latest_funding_date: Optional[date] = None
     funding_total_usd: Optional[int] = None
     funding_rounds: list[dict[str, object]] = field(default_factory=list)
+    investors: list[str] = field(default_factory=list)
+    chains: list[str] = field(default_factory=list)
     tge_status: str = "未 TGE"
     tge_probability: int = 0
     tge_date: Optional[date] = None
@@ -272,6 +274,62 @@ def parse_structured_funding_rounds(html: str) -> list[dict[str, object]]:
         if item not in rounds:
             rounds.append(item)
     return sorted(rounds, key=lambda item: str(item.get("date", "")))
+
+
+def canonical_investor_name(keyword: str) -> str:
+    names = {
+        "a16z": "a16z crypto",
+        "andreessen horowitz": "a16z crypto",
+        "yzi labs": "YZi Labs",
+        "binance labs": "Binance Labs",
+        "coinbase ventures": "Coinbase Ventures",
+        "jump crypto": "Jump Crypto",
+        "okx ventures": "OKX Ventures",
+        "hashkey": "HashKey",
+    }
+    return names.get(keyword, keyword.title())
+
+
+def parse_investors_from_text(text: str) -> list[str]:
+    normalized = re.sub(r"\\+", "", text).lower()
+    found: list[str] = []
+    for keyword in sorted(TOP_INVESTOR_KEYWORDS | STRONG_INVESTOR_KEYWORDS):
+        if keyword in normalized:
+            name = canonical_investor_name(keyword)
+            if name not in found:
+                found.append(name)
+    return found
+
+
+def parse_project_chains(values: list[str], text: str) -> list[str]:
+    haystack = " ".join(values + [text])
+    normalized = re.sub(r"\\+", "", haystack).lower()
+    candidates = [
+        ("Base", r"(?<![a-z0-9])base(?![a-z0-9])|base生态"),
+        ("Solana", r"(?<![a-z0-9])solana(?![a-z0-9])|solana生态"),
+        ("Sui", r"(?<![a-z0-9])sui(?![a-z0-9])|sui生态"),
+        ("BNB Chain", r"bnb chain|binance smart chain|(?<![a-z0-9])bsc(?![a-z0-9])"),
+        ("Ethereum", r"(?<![a-z0-9])ethereum(?![a-z0-9])|(?<![a-z0-9])eth(?![a-z0-9])"),
+        ("ZK", r"(?<![a-z0-9])zk(?![a-z0-9])|zero[- ]knowledge|零知识"),
+        ("Arbitrum", r"arbitrum"),
+        ("Optimism", r"optimism|op mainnet"),
+        ("Polygon", r"polygon"),
+        ("Mantle", r"mantle"),
+        ("Linea", r"linea"),
+        ("Scroll", r"scroll"),
+        ("Blast", r"(?<![a-z0-9])blast(?![a-z0-9])"),
+        ("Avalanche", r"avalanche|(?<![a-z0-9])avax(?![a-z0-9])"),
+        ("Aptos", r"aptos"),
+        ("Sei", r"(?<![a-z0-9])sei(?![a-z0-9])"),
+        ("Near", r"(?<![a-z0-9])near(?![a-z0-9])"),
+        ("Cosmos", r"cosmos"),
+        ("TON", r"(?<![a-z0-9])ton(?![a-z0-9])"),
+    ]
+    chains: list[str] = []
+    for name, pattern in candidates:
+        if re.search(pattern, normalized, re.I) and name not in chains:
+            chains.append(name)
+    return chains
 
 
 def classify_event(name: str) -> str:
@@ -742,6 +800,7 @@ def parse_rootdata_detail_html(html: str) -> LiveProjectDetail:
     detail.founded = extract_label_value(html, "Founded")
     detail.location = extract_label_value(html, "Location")
     detail.bucket = infer_bucket(detail.tags, " ".join([detail.description, html[:50000]]))
+    detail.chains = parse_project_chains(detail.tags, " ".join([detail.description, html[:50000]]))
 
     detail.team_members = parse_team_members(html)
     member_names = {member.get("name", "") for member in detail.team_members if member.get("name")}
@@ -761,6 +820,7 @@ def parse_rootdata_detail_html(html: str) -> LiveProjectDetail:
         detail.funding_total_usd = int(total_match.group(1) or total_match.group(2))
 
     detail.funding_rounds = parse_structured_funding_rounds(html)
+    detail.investors = parse_investors_from_text(html)
     if detail.funding_rounds:
         detail.funding_total_usd = sum(int(row.get("amount_usd", 0)) for row in detail.funding_rounds)
         latest_round = max(detail.funding_rounds, key=lambda row: str(row.get("date", "")))
@@ -826,6 +886,10 @@ def parse_rootdata_detail_html(html: str) -> LiveProjectDetail:
             )
     elif detail.latest_funding_amount_usd:
         detail.evidence_notes.append(f"RootData latest funding: ${detail.latest_funding_amount_usd:,}")
+    if detail.investors:
+        detail.evidence_notes.append(f"Investors: {', '.join(detail.investors)}")
+    if detail.chains:
+        detail.evidence_notes.append(f"Chains: {', '.join(detail.chains)}")
     if detail.tge_status == "已 TGE" and detail.tge_date:
         detail.evidence_notes.append(f"TGE detected: {detail.tge_date.isoformat()}")
     return detail

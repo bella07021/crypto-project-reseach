@@ -54,6 +54,44 @@ cp launchd/com.bella.crypto-score-watcher.plist ~/Library/LaunchAgents/
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.bella.crypto-score-watcher.plist
 ```
 
+## Local exchange listing sync on macOS
+
+The local exchange listing sync writes listing signals into `data/exchange_listings.sqlite`.
+
+Run backfill or incremental syncs by hand:
+
+```bash
+python3 exchange_listing_sync.py --mode backfill --months 3 --live --limit 30
+python3 exchange_listing_sync.py --mode incremental --live --limit 30
+```
+
+Use `--limit` to cap the maximum live source candidates per exchange during pilot runs, for example `--limit 3`. The live sync checks the first 3 announcement pages by default; pass `--max-pages N` only when you intentionally want a deeper manual run.
+
+Install the daily incremental sync as a macOS LaunchAgent:
+
+```bash
+mkdir -p logs
+cp launchd/com.bella.exchange-listing-sync.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.bella.exchange-listing-sync.plist
+launchctl kickstart -k gui/$(id -u)/com.bella.exchange-listing-sync
+```
+
+Check status and logs:
+
+```bash
+launchctl print gui/$(id -u)/com.bella.exchange-listing-sync
+tail -f logs/exchange_listing_sync.out.log
+tail -f logs/exchange_listing_sync.err.log
+```
+
+Stop or reinstall:
+
+```bash
+launchctl bootout gui/$(id -u)/com.bella.exchange-listing-sync
+cp launchd/com.bella.exchange-listing-sync.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.bella.exchange-listing-sync.plist
+```
+
 ## Tests
 
 ```bash

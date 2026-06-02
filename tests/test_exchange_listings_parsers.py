@@ -1,0 +1,315 @@
+import unittest
+from datetime import datetime, timezone
+
+from exchange_listings.models import (
+    EXCHANGE_TIMEZONES,
+    LISTING_TYPE_SPOT,
+    SOURCE_PRECEDENCE_BLOG,
+    SOURCE_PRECEDENCE_X,
+    STATUS_ANNOUNCED,
+    STATUS_TBD,
+    STATUS_TRADING_SOON,
+    STATUS_TRADING_STARTED,
+    STATUS_UNKNOWN,
+)
+from exchange_listings.parsers import parse_events
+
+
+class ExchangeListingParserTests(unittest.TestCase):
+    fixed_now = datetime(2026, 5, 29, tzinfo=timezone.utc)
+
+    def test_coinbase_roadmap_x_post_produces_tbd_spot_roadmap_event(self):
+        raw_source = {
+            "exchange": "coinbase",
+            "source_type": "official_x",
+            "source_url": "https://x.com/CoinbaseMarkets/status/100",
+            "title": "Asset added to roadmap",
+            "raw_text": "Coinbase will add support for Example Token (EXT) on the Ethereum network to our listing roadmap.",
+            "published_at": "2026-05-28T12:00:00Z",
+        }
+
+        events = parse_events(raw_source)
+
+        self.assertEqual(1, len(events))
+        event = events[0]
+        self.assertEqual("coinbase", event["exchange"])
+        self.assertEqual("EXT", event["token_symbol"])
+        self.assertEqual(STATUS_TBD, event["status"])
+        self.assertEqual(LISTING_TYPE_SPOT, event["listing_type"])
+        self.assertEqual("roadmap", event["event_kind"])
+        self.assertEqual(SOURCE_PRECEDENCE_X, event["source_precedence"])
+
+    def test_coinbase_roadmap_blog_produces_tbd_spot_roadmap_event(self):
+        raw_source = {
+            "exchange": "coinbase",
+            "source_type": "official_blog",
+            "source_url": "https://www.coinbase.com/blog/increasing-transparency-for-new-asset-listings-on-coinbase",
+            "title": "Coinbase roadmap: Nexus (NEX)",
+            "raw_text": "Nexus (NEX) has been added to the Coinbase listing roadmap.",
+            "published_at": None,
+        }
+
+        events = parse_events(raw_source)
+
+        self.assertEqual(1, len(events))
+        event = events[0]
+        self.assertEqual("coinbase", event["exchange"])
+        self.assertEqual("NEX", event["token_symbol"])
+        self.assertEqual(STATUS_TBD, event["status"])
+        self.assertEqual("roadmap", event["event_kind"])
+        self.assertEqual(SOURCE_PRECEDENCE_BLOG, event["source_precedence"])
+
+    def test_future_trading_time_produces_trading_soon(self):
+        raw_source = {
+            "exchange": "binance",
+            "source_type": "exchange_announcement",
+            "source_url": "https://www.binance.com/en/support/announcement/300",
+            "title": "Binance Will List Example Token (EXT)",
+            "raw_text": "Binance will list Example Token (EXT) and open trading at 2026-05-30 12:00 UTC.",
+            "published_at": "2026-05-29T00:00:00Z",
+        }
+
+        events = parse_events(raw_source, now=self.fixed_now)
+
+        self.assertEqual(1, len(events))
+        self.assertEqual(STATUS_TRADING_SOON, events[0]["status"])
+        self.assertEqual("2026-05-30T12:00:00Z", events[0]["trading_start_time"])
+
+    def test_explicit_pairs_deposit_and_withdrawal_times_are_preserved(self):
+        raw_source = {
+            "exchange": "binance",
+            "source_type": "exchange_announcement",
+            "source_url": "https://www.binance.com/en/support/announcement/302",
+            "title": "Binance Will List ABC Network (ABC)",
+            "raw_text": (
+                "Binance will list ABC Network (ABC). "
+                "Trading pairs: ABC/USDT, ABC/BTC. "
+                "Deposits open at 2026-05-29 08:00 UTC. "
+                "Trading opens at 2026-05-30 12:00 UTC. "
+                "Withdrawals open at 2026-05-31 12:00 UTC."
+            ),
+            "published_at": "2026-05-29T00:00:00Z",
+        }
+
+        events = parse_events(raw_source, now=self.fixed_now)
+
+        self.assertEqual(1, len(events))
+        self.assertEqual(["ABC/USDT", "ABC/BTC"], events[0]["pairs"])
+        self.assertEqual("2026-05-29T08:00:00Z", events[0]["deposit_start_time"])
+        self.assertEqual("2026-05-30T12:00:00Z", events[0]["trading_start_time"])
+        self.assertEqual("2026-05-31T12:00:00Z", events[0]["withdrawal_start_time"])
+
+    def test_exchange_timezone_map_defines_configured_exchanges(self):
+        self.assertIn("binance", EXCHANGE_TIMEZONES)
+        self.assertIn("upbit", EXCHANGE_TIMEZONES)
+
+    def test_deposit_time_before_trading_time_uses_trading_time(self):
+        raw_source = {
+            "exchange": "binance",
+            "source_type": "exchange_announcement",
+            "source_url": "https://www.binance.com/en/support/announcement/301",
+            "title": "Binance Will List Sequenced Token (SEQ)",
+            "raw_text": (
+                "Deposits for Sequenced Token (SEQ) open at 2026-05-29 08:00 UTC. "
+                "Trading will open at 2026-05-30 12:00 UTC."
+            ),
+            "published_at": "2026-05-29T00:00:00Z",
+        }
+
+        events = parse_events(raw_source, now=self.fixed_now)
+
+        self.assertEqual(1, len(events))
+        self.assertEqual(STATUS_TRADING_SOON, events[0]["status"])
+        self.assertEqual("2026-05-30T12:00:00Z", events[0]["trading_start_time"])
+
+    def test_ambiguous_timing_is_left_empty(self):
+        raw_source = {
+            "exchange": "binance",
+            "source_type": "exchange_announcement",
+            "source_url": "https://www.binance.com/en/support/announcement/302",
+            "title": "Binance Will List Ambiguous Token (AMB)",
+            "raw_text": "Binance will list Ambiguous Token (AMB). Deposits open at 2026-05-29 08:00 UTC.",
+            "published_at": "2026-05-29T00:00:00Z",
+        }
+
+        events = parse_events(raw_source, now=self.fixed_now)
+
+        self.assertEqual(1, len(events))
+        self.assertEqual(STATUS_ANNOUNCED, events[0]["status"])
+        self.assertIsNone(events[0]["trading_start_time"])
+
+    def test_past_trading_time_produces_trading_started(self):
+        raw_source = {
+            "exchange": "okx",
+            "source_type": "exchange_announcement",
+            "source_url": "https://www.okx.com/help/400",
+            "title": "OKX to List Past Token (PST) for Spot Trading",
+            "raw_text": "Spot trading for Past Token (PST) will start at 2026-05-28T09:30:00Z.",
+            "published_at": "2026-05-28T00:00:00Z",
+        }
+
+        events = parse_events(raw_source, now=self.fixed_now)
+
+        self.assertEqual(1, len(events))
+        self.assertEqual(STATUS_TRADING_STARTED, events[0]["status"])
+        self.assertEqual("2026-05-28T09:30:00Z", events[0]["trading_start_time"])
+
+    def test_missing_trading_time_with_listing_language_produces_announced(self):
+        raw_source = {
+            "exchange": "kucoin",
+            "source_type": "exchange_announcement",
+            "source_url": "https://www.kucoin.com/announcement/500",
+            "title": "KuCoin Will List No Time Token (NTT)",
+            "raw_text": "KuCoin is extremely proud to announce the listing of No Time Token (NTT).",
+            "published_at": "2026-05-29T00:00:00Z",
+        }
+
+        events = parse_events(raw_source, now=self.fixed_now)
+
+        self.assertEqual(1, len(events))
+        self.assertEqual(STATUS_ANNOUNCED, events[0]["status"])
+        self.assertIsNone(events[0]["trading_start_time"])
+
+    def test_multi_token_announcement_title_extracts_multiple_event_rows(self):
+        raw_source = {
+            "exchange": "binance",
+            "source_type": "exchange_announcement",
+            "source_url": "https://www.binance.com/en/support/announcement/600",
+            "title": "Binance Will List Alpha Token (ALP) and Beta Token (BET)",
+            "raw_text": "Binance will list Alpha Token (ALP) and Beta Token (BET) and open spot trading.",
+            "published_at": "2026-05-29T00:00:00Z",
+        }
+
+        events = parse_events(raw_source, now=self.fixed_now)
+
+        self.assertEqual(["ALP", "BET"], [event["token_symbol"] for event in events])
+        self.assertEqual([STATUS_ANNOUNCED, STATUS_ANNOUNCED], [event["status"] for event in events])
+
+    def test_multi_token_pairs_are_attributed_to_matching_symbol(self):
+        raw_source = {
+            "exchange": "binance",
+            "source_type": "exchange_announcement",
+            "source_url": "https://www.binance.com/en/support/announcement/601",
+            "title": "Binance Will List Alpha Token (ALP) and Beta Token (BET)",
+            "raw_text": "Trading pairs: ALP/USDT, BET/USDT. Binance will list Alpha Token (ALP) and Beta Token (BET).",
+            "published_at": "2026-05-29T00:00:00Z",
+        }
+
+        events = parse_events(raw_source, now=self.fixed_now)
+
+        self.assertEqual(["ALP/USDT"], events[0]["pairs"])
+        self.assertEqual(["BET/USDT"], events[1]["pairs"])
+
+    def test_korean_notice_extracts_parenthesized_symbol_and_preserves_project_name(self):
+        raw_source = {
+            "exchange": "upbit",
+            "source_type": "exchange_announcement",
+            "source_url": "https://www.upbit.com/service_center/notice?id=700",
+            "title": "거래지원 안내: 모나드 (MON)",
+            "raw_text": "모나드 (MON) 신규 거래지원 안내",
+            "project_name": "Monad",
+            "published_at": "2026-05-29T00:00:00Z",
+        }
+
+        events = parse_events(raw_source, now=self.fixed_now)
+
+        self.assertEqual(1, len(events))
+        self.assertEqual("MON", events[0]["token_symbol"])
+        self.assertEqual("Monad", events[0]["project_name"])
+
+    def test_kraken_listing_x_post_without_timing_produces_tbd_spot_event(self):
+        raw_source = {
+            "exchange": "kraken",
+            "source_type": "official_x",
+            "source_url": "https://x.com/krakenlistings/status/200",
+            "title": "New listing",
+            "raw_text": "$ABC is coming to Kraken spot markets.",
+            "published_at": "2026-05-28T13:00:00Z",
+        }
+
+        events = parse_events(raw_source)
+
+        self.assertEqual(1, len(events))
+        event = events[0]
+        self.assertEqual("kraken", event["exchange"])
+        self.assertEqual("ABC", event["token_symbol"])
+        self.assertEqual(STATUS_TBD, event["status"])
+        self.assertEqual(LISTING_TYPE_SPOT, event["listing_type"])
+
+    def test_coinbase_roadmap_removal_produces_unknown_status(self):
+        raw_source = {
+            "exchange": "Coinbase",
+            "source_type": "official_x",
+            "source_url": "https://x.com/CoinbaseMarkets/status/800",
+            "title": "Roadmap update",
+            "raw_text": "We have removed Example Token (EXT) from our listing roadmap.",
+            "published_at": "2026-05-28T12:00:00Z",
+        }
+
+        events = parse_events(raw_source)
+
+        self.assertEqual(1, len(events))
+        self.assertEqual("coinbase", events[0]["exchange"])
+        self.assertEqual("EXT", events[0]["token_symbol"])
+        self.assertEqual(STATUS_UNKNOWN, events[0]["status"])
+
+    def test_exchange_is_normalized_to_lowercase(self):
+        raw_source = {
+            "exchange": "KrAkEn",
+            "source_type": "official_x",
+            "source_url": "https://x.com/krakenlistings/status/900",
+            "title": "New listing",
+            "raw_text": "$MIX is coming to Kraken spot markets.",
+            "published_at": "2026-05-28T13:00:00Z",
+        }
+
+        events = parse_events(raw_source)
+
+        self.assertEqual(1, len(events))
+        self.assertEqual("kraken", events[0]["exchange"])
+
+    def test_simple_non_parenthesized_listing_title_extracts_symbol(self):
+        raw_source = {
+            "exchange": "okx",
+            "source_type": "exchange_announcement",
+            "source_url": "https://www.okx.com/help/901",
+            "title": "OKX will list ABC for spot trading",
+            "raw_text": "OKX will list ABC for spot trading.",
+            "published_at": "2026-05-29T00:00:00Z",
+        }
+
+        events = parse_events(raw_source, now=self.fixed_now)
+
+        self.assertEqual(1, len(events))
+        self.assertEqual("ABC", events[0]["token_symbol"])
+
+    def test_listed_on_announcement_language_is_a_listing_signal(self):
+        raw_source = {
+            "exchange": "kucoin",
+            "source_type": "exchange_announcement",
+            "source_url": "https://www.kucoin.com/announcement/en-world-premiere-qait-qait-listed-on-kucoin",
+            "title": "World Premiere: QAIT (QAIT) Listed on KuCoin",
+            "raw_text": "World Premiere: QAIT (QAIT) Listed on KuCoin.",
+            "published_at": "2026-05-28T00:00:00Z",
+        }
+
+        events = parse_events(raw_source, now=self.fixed_now)
+
+        self.assertEqual(1, len(events))
+        self.assertEqual("QAIT", events[0]["token_symbol"])
+
+    def test_will_launch_spot_pair_language_extracts_base_symbol(self):
+        raw_source = {
+            "exchange": "okx",
+            "source_type": "exchange_announcement",
+            "source_url": "https://www.okx.com/help/okx-will-launch-ai-usd-for-spot-trading",
+            "title": "OKX will launch AI/USD for spot trading",
+            "raw_text": "OKX will launch AI/USD for spot trading.",
+            "published_at": "2026-05-22T00:00:00Z",
+        }
+
+        events = parse_events(raw_source, now=self.fixed_now)
+
+        self.assertEqual(1, len(events))
+        self.assertEqual("AI", events[0]["token_symbol"])
+        self.assertEqual(["AI/USD"], events[0]["pairs"])
