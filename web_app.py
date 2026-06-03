@@ -576,6 +576,45 @@ def cmc_token_chains(project_name: str, token_ticker: str) -> list[str]:
     return chains
 
 
+def map_cmc_data_api_pair(pair: dict[str, Any], token_ticker: str) -> dict[str, Any]:
+    exchange_name = str(pair.get("exchangeName") or pair.get("exchange", {}).get("name") or "")
+    exchange_slug = str(pair.get("exchangeSlug") or "").strip()
+    if not exchange_slug:
+        exchange_slug = slugify_project_name(exchange_name)
+    return {
+        "exchange": {"name": exchange_name, "slug": exchange_slug},
+        "market_pair": pair.get("marketPair") or pair.get("market_pair") or "",
+        "category": str(pair.get("category") or "").lower(),
+        "source": "CoinMarketCap Data API",
+        "expected_symbol": token_ticker.upper().strip(),
+    }
+
+
+def fetch_cmc_data_api_market_pairs(slug: str, token_ticker: str) -> list[dict[str, Any]]:
+    pairs: list[dict[str, Any]] = []
+    limit = 100
+    expected_total = 0
+    for start in range(1, 202, limit):
+        params = urlencode({"slug": slug, "start": start, "limit": limit, "category": "all"})
+        request = Request(
+            f"https://api.coinmarketcap.com/data-api/v3/cryptocurrency/market-pairs/latest?{params}",
+            headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
+        )
+        try:
+            context = ssl._create_unverified_context()
+            with urlopen(request, timeout=8, context=context) as response:
+                payload = json.loads(response.read().decode("utf-8", errors="ignore"))
+        except Exception:
+            return pairs
+        data = payload.get("data") or {}
+        page_pairs = data.get("marketPairs") or data.get("market_pairs") or []
+        expected_total = int(data.get("numMarketPairs") or data.get("num_market_pairs") or expected_total or 0)
+        pairs.extend(map_cmc_data_api_pair(pair, token_ticker) for pair in page_pairs)
+        if len(page_pairs) < limit or (expected_total and len(pairs) >= expected_total):
+            break
+    return pairs
+
+
 def fetch_cmc_web_market_pairs(project_name: str, token_ticker: str) -> list[dict[str, Any]]:
     slug = slugify_project_name(project_name)
     symbol = token_ticker.upper().strip()
@@ -589,6 +628,17 @@ def fetch_cmc_web_market_pairs(project_name: str, token_ticker: str) -> list[dic
     script = ROOT / "cmc_market_scrape.js"
     pairs: list[dict[str, Any]] = []
     for candidate_slug in [slug, f"{slug}-labs"]:
+        candidate_pairs = fetch_cmc_data_api_market_pairs(candidate_slug, symbol)
+        if symbol:
+            candidate_pairs = [
+                pair
+                for pair in candidate_pairs or []
+                if str(pair.get("market_pair", "")).upper().startswith(f"{symbol}/")
+            ]
+        if candidate_pairs:
+            pairs = candidate_pairs
+            break
+
         try:
             result = subprocess.run(
                 ["node", str(script), candidate_slug, symbol],
@@ -666,7 +716,7 @@ def classify_cmc_market_pair(pair: dict[str, Any]) -> tuple[str, float] | None:
         return None
     if "binance" in haystack and category == "spot":
         return "BN 现货", 85.0
-    if "binance" in haystack and category in {"derivatives", "futures"}:
+    if "binance" in haystack and category in {"derivatives", "futures", "perpetual", "swap"}:
         return "BN 合约", 75.0
     if "coinbase" in haystack and category == "spot":
         return "Coinbase", 95.0
@@ -1097,6 +1147,22 @@ def cached_exchange_progress(row: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def should_refresh_cached_cmc_progress(row: dict[str, Any]) -> bool:
+    source = str(row.get("exchange_source", "")).lower()
+    has_cmc_source = "coinmarketcap" in source or source == "cmc"
+    has_identity = bool(str(row.get("project_name") or "").strip() or str(row.get("token_ticker") or "").strip())
+    return has_cmc_source and has_identity
+
+
+def dashboard_exchange_progress(row: dict[str, Any]) -> dict[str, Any]:
+    cached_progress = cached_exchange_progress(row)
+    if should_refresh_cached_cmc_progress(row):
+        refreshed_progress = project_exchange_progress(row)
+        if refreshed_progress.get("listed_exchanges"):
+            return refreshed_progress
+    return cached_progress or exchange_progress(row.get("roadmap_events", []))
+
+
 def dashboard_rows(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     latest: dict[str, dict[str, Any]] = {}
     for row in history:
@@ -1105,7 +1171,7 @@ def dashboard_rows(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
         latest[key] = row
     rows = []
     for row in latest.values():
-        progress = cached_exchange_progress(row) or exchange_progress(row.get("roadmap_events", []))
+        progress = dashboard_exchange_progress(row)
         pre_tge_progress = pre_tge_exchange_progress_from_db(row)
         detail_row = {**row, **progress}
         listing_details = progress.get("exchange_listing_details") or exchange_listing_details(detail_row)

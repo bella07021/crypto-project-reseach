@@ -17,6 +17,7 @@ from web_app import (
     exchange_progress,
     exchange_listing_details,
     exchange_progress_from_cmc,
+    fetch_cmc_data_api_market_pairs,
     pre_tge_exchange_progress_from_db,
     apply_icodrops_tge_signal,
     project_exchange_progress,
@@ -243,6 +244,42 @@ class WebAppTests(unittest.TestCase):
 
         self.assertEqual(rows[0]["assessment"]["investor_highlights"], ["Founders Fund*", "Delphi"])
 
+    def test_dashboard_rows_refreshes_cached_cmc_exchange_progress(self):
+        with patch(
+            "web_app.project_exchange_progress",
+            return_value={
+                "exchange_score": 95.0,
+                "exchange_progress": 95.0,
+                "exchange_raw_score": 95.0,
+                "pre_tge_exchange_score": 95.0,
+                "exchange_source": "CoinMarketCap Data API",
+                "listed_exchanges": ["Coinbase", "Bithumb 韩元现货", "Kraken", "BN 合约"],
+            },
+        ), patch(
+            "web_app.pre_tge_exchange_progress_from_db",
+            return_value={
+                "pre_tge_exchange_score": 95.0,
+                "pre_tge_exchange_source": "exchange_listings_db",
+                "pre_tge_listing_signals": [],
+            },
+        ):
+            rows = dashboard_rows(
+                [
+                    {
+                        "assessed_at": "2026-06-03T01:00:00Z",
+                        "token_ticker": "BILL",
+                        "project_name": "Billions Network",
+                        "rootdata_url": "https://www.rootdata.com/Projects/detail/Billions-Network?k=1",
+                        "exchange_score": 95.0,
+                        "exchange_source": "CoinMarketCap Web",
+                        "listed_exchanges": ["Coinbase", "Bybit", "Bitget", "KuCoin", "MEXC"],
+                    }
+                ]
+            )
+
+        self.assertEqual(rows[0]["exchange_source"], "CoinMarketCap Data API")
+        self.assertEqual(rows[0]["listed_exchanges"], ["Coinbase", "Bithumb 韩元现货", "Kraken", "BN 合约"])
+
     def test_exchange_progress_uses_quality_tiers_and_ignores_alpha(self):
         progress = exchange_progress(
             [
@@ -373,6 +410,67 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(progress["exchange_raw_score"], 95.0)
         self.assertEqual(progress["exchange_score"], 95.0)
         self.assertEqual(progress["listed_exchanges"], ["Coinbase", "Kraken", "Bitget", "KuCoin", "MEXC"])
+
+    def test_cmc_progress_includes_second_page_spot_and_binance_perpetual(self):
+        progress = exchange_progress_from_cmc(
+            [
+                {"exchange": {"name": "Kraken", "slug": "kraken"}, "market_pair": "BILL/USD", "category": "spot"},
+                {"exchange": {"name": "Bithumb", "slug": "bithumb"}, "market_pair": "BILL/KRW", "category": "spot"},
+                {"exchange": {"name": "Binance", "slug": "binance"}, "market_pair": "BILL/USDT", "category": "perpetual"},
+                {"exchange": {"name": "Binance Alpha", "slug": "binance-alpha"}, "market_pair": "BILL/USDT", "category": "spot"},
+            ]
+        )
+
+        self.assertEqual(progress["exchange_score"], 95.0)
+        self.assertEqual(progress["listed_exchanges"], ["Bithumb 韩元现货", "Kraken", "BN 合约"])
+
+    def test_cmc_data_api_market_pairs_fetches_multiple_pages(self):
+        captured_starts = []
+
+        class FakeResponse:
+            def __init__(self, payload):
+                self.payload = payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+            def read(self):
+                return json.dumps(self.payload).encode("utf-8")
+
+        def fake_urlopen(request, timeout=0, context=None):
+            query = __import__("urllib.parse").parse.parse_qs(__import__("urllib.parse").parse.urlparse(request.full_url).query)
+            start = int(query["start"][0])
+            captured_starts.append(start)
+            if start == 1:
+                page_pairs = [
+                    {
+                        "exchangeName": "Bithumb",
+                        "exchangeSlug": "bithumb",
+                        "marketPair": "BILL/KRW",
+                        "category": "spot",
+                    }
+                ] * 100
+            else:
+                page_pairs = [
+                    {
+                        "exchangeName": "Binance",
+                        "exchangeSlug": "binance",
+                        "marketPair": "BILL/USDT",
+                        "category": "perpetual",
+                    }
+                ]
+            return FakeResponse({"data": {"numMarketPairs": 101, "marketPairs": page_pairs}})
+
+        with patch("web_app.urlopen", fake_urlopen):
+            pairs = fetch_cmc_data_api_market_pairs("billions-network", "BILL")
+
+        self.assertEqual(captured_starts, [1, 101])
+        self.assertEqual(pairs[0]["exchange"], {"name": "Bithumb", "slug": "bithumb"})
+        self.assertEqual(pairs[-1]["market_pair"], "BILL/USDT")
+        self.assertEqual(pairs[-1]["category"], "perpetual")
 
     def test_project_exchange_progress_does_not_filter_cmc_by_project_name_when_ticker_missing(self):
         captured = {}
