@@ -40,6 +40,8 @@ GITHUB_HISTORY_PATH = "data/project_scores.jsonl"
 GITHUB_REQUESTS_PATH = "data/project_requests.jsonl"
 ACTIVE_REQUEST_STATUSES = {"pending", "processing"}
 ICODROPS_CACHE: dict[str, str] = {}
+BINANCE_FUTURES_ONBOARD_DATES: dict[str, str] = {}
+BINANCE_FUTURES_ONBOARD_LOADED = False
 KNOWN_ICODROPS_AIRDROP_DATES = {
     "solstice": "2026-05-25",
 }
@@ -913,13 +915,77 @@ def _days_after_tge(event: dict[str, Any], tge_date: str) -> int | None:
             return int(event["days_after_tge"])
         except (TypeError, ValueError):
             return None
-    listed_date = _event_date(event.get("date"))
+    listed_date = _exchange_listing_event_date(event)
     if not listed_date or not tge_date:
         return None
     try:
         return (datetime.fromisoformat(listed_date).date() - datetime.fromisoformat(tge_date).date()).days
     except ValueError:
         return None
+
+
+def _exchange_listing_event_date(event: dict[str, Any]) -> str:
+    return _event_date(
+        event.get("trading_start_time")
+        or event.get("date")
+        or event.get("announcement_published_at")
+    )
+
+
+def _exchange_listing_event_priority(event: dict[str, Any]) -> int:
+    if event.get("trading_start_time"):
+        return 3
+    if event.get("date"):
+        return 2
+    if event.get("announcement_published_at"):
+        return 1
+    return 0
+
+
+def _prefer_exchange_listing_event(existing: dict[str, Any] | None, candidate: dict[str, Any]) -> bool:
+    if existing is None:
+        return True
+    existing_priority = _exchange_listing_event_priority(existing)
+    candidate_priority = _exchange_listing_event_priority(candidate)
+    if candidate_priority != existing_priority:
+        return candidate_priority > existing_priority
+    existing_date = _exchange_listing_event_date(existing)
+    candidate_date = _exchange_listing_event_date(candidate)
+    return bool(candidate_date and (not existing_date or candidate_date < existing_date))
+
+
+def fetch_binance_futures_onboard_date(token_symbol: str) -> str:
+    symbol = token_symbol.upper().strip()
+    if not symbol:
+        return ""
+
+    global BINANCE_FUTURES_ONBOARD_LOADED
+    if not BINANCE_FUTURES_ONBOARD_LOADED:
+        request = Request(
+            "https://fapi.binance.com/fapi/v1/exchangeInfo",
+            headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
+        )
+        try:
+            context = ssl._create_unverified_context()
+            with urlopen(request, timeout=8, context=context) as response:
+                payload = json.loads(response.read().decode("utf-8", errors="ignore"))
+            for item in payload.get("symbols", []) or []:
+                base_asset = str(item.get("baseAsset") or "").upper().strip()
+                onboard_ms = item.get("onboardDate")
+                if not base_asset or not onboard_ms:
+                    continue
+                try:
+                    onboard_date = datetime.fromtimestamp(int(onboard_ms) / 1000, tz=timezone.utc).date().isoformat()
+                except (TypeError, ValueError, OSError):
+                    continue
+                exact_symbol = str(item.get("symbol") or "").upper().strip()
+                if exact_symbol == f"{base_asset}USDT" or base_asset not in BINANCE_FUTURES_ONBOARD_DATES:
+                    BINANCE_FUTURES_ONBOARD_DATES[base_asset] = onboard_date
+        except Exception:
+            pass
+        BINANCE_FUTURES_ONBOARD_LOADED = True
+
+    return BINANCE_FUTURES_ONBOARD_DATES.get(symbol, "")
 
 
 def exchange_listing_details(row: dict[str, Any]) -> list[dict[str, Any]]:
@@ -933,8 +999,23 @@ def exchange_listing_details(row: dict[str, Any]) -> list[dict[str, Any]]:
         if not group or not event.get("date"):
             continue
         existing = events_by_group.get(group)
-        if existing is None or _event_date(event.get("date")) < _event_date(existing.get("date")):
+        if _prefer_exchange_listing_event(existing, event):
             events_by_group[group] = event
+    for signal in row.get("pre_tge_listing_signals", []) or []:
+        group = _exchange_event_group(
+            " ".join(
+                [
+                    str(signal.get("exchange") or ""),
+                    str(signal.get("event_kind") or ""),
+                    str(signal.get("announcement_title") or ""),
+                ]
+            )
+        )
+        if not group or not _exchange_listing_event_date(signal):
+            continue
+        existing = events_by_group.get(group)
+        if _prefer_exchange_listing_event(existing, signal):
+            events_by_group[group] = signal
 
     details = []
     for exchange in row.get("listed_exchanges", []) or []:
@@ -942,10 +1023,16 @@ def exchange_listing_details(row: dict[str, Any]) -> list[dict[str, Any]]:
         event = events_by_group.get(group) or (
             events_by_group.get("韩所") if group in {"Upbit 韩元现货", "Bithumb 韩元现货"} else None
         )
+        if not event and group == "BN 合约" and tge_date:
+            listed_at = fetch_binance_futures_onboard_date(
+                str(row.get("token_ticker") or row.get("token_symbol") or "")
+            )
+            if listed_at:
+                event = {"date": listed_at}
         details.append(
             {
                 "exchange": exchange,
-                "listed_at": _event_date(event.get("date")) if event else "",
+                "listed_at": _exchange_listing_event_date(event) if event else "",
                 "days_after_tge": _days_after_tge(event, tge_date) if event else None,
             }
         )

@@ -44,6 +44,10 @@ function exchangeDisplayName(exchange) {
   return name;
 }
 
+function isPriorityExchange(exchange) {
+  return ["BN 合约", "BN 现货", "Upbit 韩元现货"].includes(String(exchange || ""));
+}
+
 function tokenLabel(assessment) {
   return assessment.token_ticker || assessment.project_name || assessment.x_handle || "--";
 }
@@ -288,7 +292,6 @@ function shouldShowExchangeTime(exchange) {
     "BN 现货",
     "BN 合约",
     "Upbit 韩元现货",
-    "Bithumb 韩元现货",
   ].includes(name);
 }
 
@@ -387,7 +390,6 @@ function renderReport(assessment, workbook) {
       window.alert(error.message);
     });
   });
-  get("fetchStatus").textContent = assessment.fetch_status || "unknown";
   get("tgeStatus").textContent = assessment.tge_status || "--";
   get("tgeProbability").textContent = assessment.tge_status === "已 TGE" ? "已 TGE" : "未 TGE";
   get("tgeDate").textContent = assessment.tge_status === "已 TGE"
@@ -395,7 +397,6 @@ function renderReport(assessment, workbook) {
     : "未 TGE";
   const tgeMethod = visibleTgeMethod(assessment);
   get("tgeMethod").textContent = tgeMethod ? `方式: ${tgeMethod}` : "方式: --";
-  renderList(get("evidenceList"), uniqueEvidence(assessment), "暂无证据。");
   renderTgeEvidence(get("tgeEvidenceList"), assessment);
   renderRoadmap(get("roadmapList"), assessment);
   reportMount.innerHTML = "";
@@ -504,7 +505,10 @@ function scoreBreakdown(row) {
 function listedExchangeSummary(row) {
   const exchanges = exchangeListingDetails(row);
   const chips = exchanges.length
-    ? exchanges.map((item) => `<span>${exchangeDisplayName(item.exchange) || "--"}</span>`).join("")
+    ? exchanges.map((item) => {
+        const className = isPriorityExchange(item.exchange) ? ' class="priority-exchange-chip"' : "";
+        return `<span${className}>${exchangeDisplayName(item.exchange) || "--"}</span>`;
+      }).join("")
     : "<span>暂无上线数据</span>";
   return `<div class="exchange-chips exchange-chips-compact">${chips}</div>`;
 }

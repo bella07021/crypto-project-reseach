@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>加密项目调研评分</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=20260603-score-guide" />
   </head>
   <body>
     <main class="app-frame">
@@ -16,6 +16,7 @@
         <nav>
           <button type="button" class="nav-item active" data-view="add">添加/更新项目信息</button>
           <button type="button" class="nav-item" data-view="dashboard">Dashboard</button>
+          <button type="button" class="nav-item" data-view="guide">分数计算说明</button>
         </nav>
       </aside>
 
@@ -78,6 +79,89 @@
             </table>
           </div>
         </section>
+
+        <section class="view" id="guideView">
+          <article class="guide-page markdown-page">
+            <h1># 分数计算说明</h1>
+            <p>基本面总分满分 <strong>100</strong>。先计算 6 个模块各自的 <strong>0-100 模块分</strong>，再按权重加权。</p>
+
+            <h2>## 总分公式</h2>
+            <pre><code>总分 =
+团队分 x 0.25
++ 融资分 x 0.20
++ 投资方 x 0.15
++ 社媒分 x 0.20
++ 链生态 x 0.05
++ TGE 前交易所 x 0.15</code></pre>
+            <p>例：团队 85、融资 96、投资方 100、社媒 87、链生态 95、TGE 前交易所 95，则总分约为：</p>
+            <pre><code>85 x 0.25 + 96 x 0.20 + 100 x 0.15 + 87 x 0.20 + 95 x 0.05 + 95 x 0.15 = 91.55</code></pre>
+
+            <h2>## 团队分 25%</h2>
+            <ul>
+              <li>团队分使用抓取到的 <strong>team raw score</strong> 作为基础分，范围是 0-100。</li>
+              <li>如果团队背景被识别为 <strong>pure_chinese / chinese / cn</strong>，最终团队分会乘以 <strong>0.30</strong>，等于扣掉 <strong>70%</strong>。</li>
+              <li>非纯中文团队不做这个 0.30 折扣，直接使用 0-100 的基础团队分。</li>
+              <li>展示文案里的实名成员数、地区识别人数、国际化/中文团队判断，是解释 team raw score 的主要证据。</li>
+            </ul>
+
+            <h2>## 融资分 20%</h2>
+            <p>当前优先使用 RootData 赛道融资排名公式：</p>
+            <pre><code>融资分 = min(赛道排名分 + 金额加成, 100) x 融资时间系数</code></pre>
+            <ul>
+              <li>赛道排名分锚点：第 1 名 = 90，第 10 名 = 82，第 30 名 = 72，第 100 名 = 50，第 300 名 = 25；300 名以后 = 10。锚点之间线性插值。</li>
+              <li>金额加成范围是 <strong>0-10</strong>。同赛道融资金额分位越高，加成越接近 10；没有金额或没有同赛道金额样本时，加成 = 0。</li>
+              <li>融资时间系数：0-365 天 = x1.00，不扣分。</li>
+              <li>融资时间系数：366-730 天 = x0.85，等于扣 <strong>15%</strong>。</li>
+              <li>融资时间系数：731-1095 天 = x0.65，等于扣 <strong>35%</strong>。</li>
+              <li>融资时间系数：超过 1095 天 = x0.45，等于扣 <strong>55%</strong>。</li>
+            </ul>
+            <p>如果没有赛道排名，才会退回旧公式：融资金额最高按 500,000,000 美元折算 50 分，融资时间一年内最高 50 分；缺少金额或时间时融资分 = 0。</p>
+
+            <h2>## 投资方 15%</h2>
+            <ul>
+              <li>命中 2 个及以上顶级机构 = <strong>100</strong>。</li>
+              <li>命中 1 个顶级机构 + 至少 1 个强机构 = <strong>95</strong>。</li>
+              <li>命中 1 个顶级机构 = <strong>90</strong>。</li>
+              <li>命中 2 个及以上强机构 = <strong>85</strong>。</li>
+              <li>命中 1 个强机构 = <strong>70</strong>。</li>
+              <li>没有顶级/强机构，但有 3 个及以上具名投资方 = <strong>55</strong>。</li>
+              <li>只有 1-2 个普通具名投资方 = <strong>45</strong>；没有投资方信息 = <strong>0</strong>。</li>
+            </ul>
+            <p>顶级机构关键词包括：YZi Labs、Binance Labs、Coinbase Ventures、Founders Fund、a16z、Paradigm、Polychain、Multicoin、Jump Crypto、Dragonfly。强机构关键词包括：Hashed、Spartan、Animoca、Delphi、IOSG、Maven 11、Mirana、Galaxy、OKX Ventures、HashKey。</p>
+
+            <h2>## 社媒分 20%</h2>
+            <ul>
+              <li>社媒分按 X followers 在同赛道 benchmark 里的百分位计算，范围是 0-100。</li>
+              <li>计算方式是同赛道中有多少项目粉丝数低于当前项目，再换算成百分位。</li>
+              <li>如果缺少 X followers，社媒分 = <strong>0</strong>。</li>
+              <li>如果同赛道只有 1 个可比样本，且当前项目粉丝数不低于该样本，社媒分 = <strong>100</strong>；否则 = <strong>0</strong>。</li>
+            </ul>
+
+            <h2>## 链生态 5%</h2>
+            <ul>
+              <li>Base = <strong>100</strong>。</li>
+              <li>Solana = <strong>95</strong>。</li>
+              <li>Sui = <strong>90</strong>。</li>
+              <li>BNB Chain / BSC = <strong>85</strong>。</li>
+              <li>Ethereum / zkSync / Starknet / 零知识相关 = <strong>80</strong>。</li>
+              <li>Arbitrum / Optimism / Polygon / Mantle / Linea / Scroll / Blast = <strong>75</strong>。</li>
+              <li>Avalanche / Aptos / Sei / Near / Cosmos / TON = <strong>65</strong>。</li>
+              <li>有链信息但未命中以上规则 = <strong>35</strong>；没有链信息 = <strong>0</strong>。</li>
+              <li>多链项目取最高命中的链生态分。</li>
+            </ul>
+
+            <h2>## TGE 前交易所 15%</h2>
+            <p>这一项主要来自各交易所公告、交易所 listing 页面和本地 exchange-listings 数据库，判断项目是否有高质量上线或预上线信号。BN Alpha 不计入这一项。</p>
+            <ul>
+              <li>Coinbase，或 Upbit / Bithumb 韩元现货信号 = <strong>95</strong>。</li>
+              <li>BN 现货 = <strong>85</strong>。</li>
+              <li>OKX / Bybit / Kraken 任一命中 = <strong>78</strong>。</li>
+              <li>BN 合约 / Binance Futures / Binance Perpetual = <strong>75</strong>。</li>
+              <li>普通主流现货交易所只统计 Gate、Bitget、KuCoin、MEXC：1 家 = <strong>55</strong>，2 家 = <strong>50</strong>，3-4 家 = <strong>40</strong>，5 家及以上 = <strong>30</strong>。</li>
+              <li>没有可信交易所公告或 listing 信号 = <strong>10</strong>。</li>
+            </ul>
+          </article>
+        </section>
       </section>
     </main>
 
@@ -131,15 +215,7 @@
         </section>
 
         <section class="report-grid">
-          <article class="report-section">
-            <div class="section-title">
-              <h3>详细信息</h3>
-              <span data-field="fetchStatus">--</span>
-            </div>
-            <ul data-field="evidenceList" class="clean-list"></ul>
-          </article>
-
-          <article class="report-section">
+          <article class="report-section wide">
             <div class="section-title">
               <h3>TGE 情况</h3>
               <span data-field="tgeStatus">--</span>
@@ -163,6 +239,6 @@
       </section>
     </template>
 
-    <script src="./app.js?v=20260602-investor-highlights"></script>
+    <script src="./app.js?v=20260603-score-guide"></script>
   </body>
 </html>

@@ -312,6 +312,59 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(details[2], {"exchange": "Bitget", "listed_at": "", "days_after_tge": None})
         self.assertEqual(details[3], {"exchange": "Gate", "listed_at": "2026-05-24", "days_after_tge": 4})
 
+    def test_exchange_listing_details_attach_timing_from_listing_signals(self):
+        details = exchange_listing_details(
+            {
+                "tge_date": "2026-05-04",
+                "listed_exchanges": ["Coinbase", "BN 合约", "BN 现货", "Upbit 韩元现货", "Bithumb 韩元现货"],
+                "roadmap_events": [],
+                "pre_tge_listing_signals": [
+                    {
+                        "exchange": "Coinbase",
+                        "announcement_published_at": "2026-05-03T08:00:00Z",
+                        "trading_start_time": "2026-05-04T08:00:00Z",
+                    },
+                    {
+                        "exchange": "BN 合约",
+                        "announcement_published_at": "2026-05-04T00:00:00Z",
+                        "trading_start_time": "2026-05-05T00:00:00Z",
+                    },
+                    {
+                        "exchange": "BN 现货",
+                        "announcement_published_at": "2026-05-06T00:00:00Z",
+                    },
+                    {
+                        "exchange": "Upbit 韩元现货",
+                        "trading_start_time": "2026-05-06T00:00:00Z",
+                    },
+                    {
+                        "exchange": "Bithumb 韩元现货",
+                        "trading_start_time": "2026-05-28T08:00:00Z",
+                    },
+                ],
+            }
+        )
+
+        self.assertEqual(details[0], {"exchange": "Coinbase", "listed_at": "2026-05-04", "days_after_tge": 0})
+        self.assertEqual(details[1], {"exchange": "BN 合约", "listed_at": "2026-05-05", "days_after_tge": 1})
+        self.assertEqual(details[2], {"exchange": "BN 现货", "listed_at": "2026-05-06", "days_after_tge": 2})
+        self.assertEqual(details[3], {"exchange": "Upbit 韩元现货", "listed_at": "2026-05-06", "days_after_tge": 2})
+        self.assertEqual(details[4], {"exchange": "Bithumb 韩元现货", "listed_at": "2026-05-28", "days_after_tge": 24})
+
+    def test_exchange_listing_details_uses_binance_futures_onboard_date(self):
+        with patch("web_app.fetch_binance_futures_onboard_date", return_value="2026-05-07"):
+            details = exchange_listing_details(
+                {
+                    "token_ticker": "BILL",
+                    "tge_date": "2026-05-04",
+                    "listed_exchanges": ["BN 合约"],
+                    "roadmap_events": [],
+                    "pre_tge_listing_signals": [],
+                }
+            )
+
+        self.assertEqual(details[0], {"exchange": "BN 合约", "listed_at": "2026-05-07", "days_after_tge": 3})
+
     def test_exchange_progress_from_cmc_pairs_uses_cmc_exchange_names(self):
         progress = exchange_progress_from_cmc(
             [
