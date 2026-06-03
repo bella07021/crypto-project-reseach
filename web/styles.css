@@ -176,6 +176,11 @@ button:disabled { cursor: wait; opacity: 0.65; }
   background: rgba(255, 92, 92, 0.08);
 }
 
+.dashboard-delete-button {
+  margin-top: 0;
+  white-space: nowrap;
+}
+
 .total-score {
   --score: 0%;
   display: grid;

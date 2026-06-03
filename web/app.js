@@ -522,7 +522,7 @@ function tgeSummary(row) {
 function renderDashboard() {
   dashboardBody.innerHTML = "";
   if (!state.dashboardRows.length) {
-    dashboardBody.innerHTML = '<tr><td colspan="6">暂无项目。</td></tr>';
+    dashboardBody.innerHTML = '<tr><td colspan="7">暂无项目。</td></tr>';
     return;
   }
   for (const row of state.dashboardRows) {
@@ -534,6 +534,7 @@ function renderDashboard() {
       <td>${scoreBreakdown(row)}</td>
       <td>${tgeSummary(row)}</td>
       <td>${listedExchangeSummary(row)}</td>
+      <td><button type="button" class="danger-button dashboard-delete-button">删除项目</button></td>
     `;
     tr.querySelector(".ticker-link").addEventListener("click", () => {
       switchView("add");
@@ -543,6 +544,11 @@ function renderDashboard() {
         renderReport(row.assessment, row.assessment?.workbook);
       }
       window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+    tr.querySelector(".dashboard-delete-button").addEventListener("click", () => {
+      deleteCurrentProject(row.assessment || row).catch((error) => {
+        window.alert(error.message);
+      });
     });
     dashboardBody.appendChild(tr);
   }
