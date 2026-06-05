@@ -321,6 +321,58 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(rows[0]["tge_probability"], 100)
         self.assertEqual(rows[0]["tge_method"], "CoinMarketCap Markets")
 
+    def test_dashboard_rows_infers_tge_date_from_earliest_trading_start(self):
+        with patch(
+            "web_app.project_exchange_progress",
+            return_value={
+                "exchange_score": 55.0,
+                "exchange_progress": 55.0,
+                "exchange_raw_score": 55.0,
+                "pre_tge_exchange_score": 55.0,
+                "exchange_source": "CoinMarketCap Data API",
+                "listed_exchanges": ["KuCoin", "Gate", "MEXC"],
+            },
+        ), patch(
+            "web_app.pre_tge_exchange_progress_from_db",
+            return_value={
+                "pre_tge_exchange_score": 40.0,
+                "pre_tge_exchange_source": "exchange_listings_db",
+                "pre_tge_listing_signals": [
+                    {
+                        "exchange": "KuCoin",
+                        "announcement_published_at": "2026-05-27T19:06:00Z",
+                        "trading_start_time": "2026-05-28T13:00:00Z",
+                    },
+                    {
+                        "exchange": "Gate",
+                        "announcement_published_at": "2026-05-28T15:00:55Z",
+                        "trading_start_time": "2026-05-28T16:00:00Z",
+                    },
+                    {
+                        "exchange": "MEXC",
+                        "announcement_published_at": "2026-05-28T03:19:21Z",
+                        "trading_start_time": "",
+                    },
+                ],
+            },
+        ):
+            rows = dashboard_rows(
+                [
+                    {
+                        "assessed_at": "2026-06-05T01:00:00Z",
+                        "token_ticker": "QAIT",
+                        "project_name": "SEALCOIN",
+                        "rootdata_url": "https://www.rootdata.com/Projects/detail/SEALCOIN?k=1",
+                        "tge_status": "未 TGE",
+                        "tge_date": "",
+                    }
+                ]
+            )
+
+        self.assertEqual(rows[0]["tge_status"], "已 TGE")
+        self.assertEqual(rows[0]["tge_date"], "2026-05-28")
+        self.assertEqual(rows[0]["assessment"]["tge_date"], "2026-05-28")
+
     def test_dashboard_rows_refreshes_rootdata_cached_project_from_cmc_for_tge(self):
         with patch(
             "web_app.project_exchange_progress",

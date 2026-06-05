@@ -1226,6 +1226,8 @@ def apply_cmc_market_tge_status(assessment: dict[str, Any]) -> dict[str, Any]:
     if has_cmc_markets:
         assessment["tge_status"] = "已 TGE"
         assessment["tge_probability"] = 100
+        if not assessment.get("tge_date"):
+            assessment["tge_date"] = earliest_exchange_listed_date(assessment)
         assessment["tge_method"] = assessment.get("tge_method") or "CoinMarketCap Markets"
         notes = assessment.setdefault("evidence_notes", [])
         note = f"CMC markets detected listed exchanges: {', '.join(assessment.get('listed_exchanges', []))}"
@@ -1248,6 +1250,16 @@ def apply_cmc_market_tge_status(assessment: dict[str, Any]) -> dict[str, Any]:
         assessment["tge_evidence"] = []
         assessment["tge_evidence_links"] = []
     return assessment
+
+
+def earliest_exchange_listed_date(assessment: dict[str, Any]) -> str:
+    dates = [
+        str(item.get("listed_at") or "").split("T", 1)[0]
+        for item in assessment.get("exchange_listing_details", []) or []
+        if item.get("listed_at")
+    ]
+    dates = [date for date in dates if date]
+    return min(dates) if dates else ""
 
 
 def is_foreign_project_x_status(url: str, x_handle: str) -> bool:
