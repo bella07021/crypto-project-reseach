@@ -10,7 +10,7 @@
 
   <key>ProgramArguments</key>
   <array>
-    <string>/usr/bin/python3</string>
+    <string>/Library/Frameworks/Python.framework/Versions/3.11/bin/python3</string>
     <string>/Users/apple/Documents/New project/exchange_listing_sync.py</string>
     <string>--mode</string>
     <string>incremental</string>

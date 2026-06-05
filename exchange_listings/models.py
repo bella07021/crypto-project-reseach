@@ -13,7 +13,10 @@ EXCHANGES = (
 )
 
 LISTING_TYPE_SPOT = "spot"
+LISTING_TYPE_FUTURES = "futures"
+LISTING_TYPE_PERPETUAL = "perpetual"
 EVENT_FAMILY_SPOT_LISTING = "spot_listing"
+EVENT_FAMILY_FUTURES_LISTING = "futures_listing"
 
 STATUS_TBD = "TBD"
 STATUS_ANNOUNCED = "announced"

@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 
 from exchange_listings.models import (
     EXCHANGE_TIMEZONES,
+    EVENT_FAMILY_FUTURES_LISTING,
+    LISTING_TYPE_PERPETUAL,
     LISTING_TYPE_SPOT,
     SOURCE_PRECEDENCE_BLOG,
     SOURCE_PRECEDENCE_X,
@@ -75,6 +77,44 @@ class ExchangeListingParserTests(unittest.TestCase):
         self.assertEqual(STATUS_TRADING_SOON, events[0]["status"])
         self.assertEqual("2026-05-30T12:00:00Z", events[0]["trading_start_time"])
 
+    def test_binance_futures_announcement_produces_perpetual_event(self):
+        raw_source = {
+            "exchange": "binance",
+            "source_type": "exchange_announcement",
+            "source_url": "https://www.binance.com/en/support/announcement/400",
+            "title": "Binance Futures Will Launch BILLUSDT Perpetual Contract",
+            "raw_text": (
+                "Binance Futures will launch BILLUSDT perpetual contract with up to 50x leverage "
+                "at 2026-05-05 10:00 UTC."
+            ),
+            "published_at": "2026-05-04T00:00:00Z",
+        }
+
+        events = parse_events(raw_source, now=self.fixed_now)
+
+        self.assertEqual(1, len(events))
+        self.assertEqual("BILL", events[0]["token_symbol"])
+        self.assertEqual(LISTING_TYPE_PERPETUAL, events[0]["listing_type"])
+        self.assertEqual(EVENT_FAMILY_FUTURES_LISTING, events[0]["event_family"])
+        self.assertEqual("futures_listing", events[0]["event_kind"])
+        self.assertEqual("2026-05-05T10:00:00Z", events[0]["trading_start_time"])
+
+    def test_binance_futures_announcement_parses_parenthesized_utc_time(self):
+        raw_source = {
+            "exchange": "binance",
+            "source_type": "exchange_announcement",
+            "source_url": "https://www.binance.com/en/support/announcement/401",
+            "title": "Binance Futures Will Launch USDⓈ-Margined CTRUSDT Perpetual Contract (2026-05-28)",
+            "raw_text": "2026-05-28 09:30 (UTC): CTRUSDT Perpetual Contract",
+            "published_at": "2026-05-28T00:00:00Z",
+        }
+
+        events = parse_events(raw_source, now=self.fixed_now)
+
+        self.assertEqual(1, len(events))
+        self.assertEqual("CTR", events[0]["token_symbol"])
+        self.assertEqual("2026-05-28T09:30:00Z", events[0]["trading_start_time"])
+
     def test_explicit_pairs_deposit_and_withdrawal_times_are_preserved(self):
         raw_source = {
             "exchange": "binance",
@@ -137,6 +177,18 @@ class ExchangeListingParserTests(unittest.TestCase):
         self.assertEqual(1, len(events))
         self.assertEqual(STATUS_ANNOUNCED, events[0]["status"])
         self.assertIsNone(events[0]["trading_start_time"])
+
+    def test_parenthesized_numeric_text_is_not_a_token_symbol(self):
+        raw_source = {
+            "exchange": "binance",
+            "source_type": "exchange_announcement",
+            "source_url": "https://www.binance.com/en/support/announcement/402",
+            "title": "Binance Adds USDT/AED Spot Trading Pair",
+            "raw_text": "Trading opens at 2026-06-04 08:00 (UTC). You may contact Circle at +33(1)59000130.",
+            "published_at": "2026-06-04T00:00:00Z",
+        }
+
+        self.assertEqual([], parse_events(raw_source, now=self.fixed_now))
 
     def test_past_trading_time_produces_trading_started(self):
         raw_source = {

@@ -2,7 +2,10 @@ import re
 from datetime import datetime, timezone
 
 from exchange_listings.models import (
+    EVENT_FAMILY_FUTURES_LISTING,
     EVENT_FAMILY_SPOT_LISTING,
+    LISTING_TYPE_FUTURES,
+    LISTING_TYPE_PERPETUAL,
     LISTING_TYPE_SPOT,
     SOURCE_PRECEDENCE_ANNOUNCEMENT,
     SOURCE_PRECEDENCE_BLOG,
@@ -20,13 +23,14 @@ PARSER_VERSION = "exchange-listings-parser-v1"
 _PAREN_SYMBOL_RE = re.compile(r"[\(（]([A-Z0-9]{1,12})[\)）]")
 _CASH_SYMBOL_RE = re.compile(r"(?<![A-Za-z0-9])\$([A-Z][A-Z0-9]{1,11})\b")
 _UTC_TIME_RE = re.compile(
-    r"\b(?P<date>\d{4}-\d{2}-\d{2})[T ](?P<time>\d{2}:\d{2}(?::\d{2})?)\s*(?P<zone>Z|UTC)\b",
+    r"\b(?P<date>\d{4}-\d{2}-\d{2})[T ](?P<time>\d{2}:\d{2}(?::\d{2})?)\s*(?:\(\s*)?(?P<zone>Z|UTC)(?:\s*\))?",
     re.IGNORECASE,
 )
 _SIMPLE_LISTING_SYMBOL_RE = re.compile(
     r"\b(?i:will list|to list|listing of|will launch)\s+([A-Z][A-Z0-9]{1,11})(?:/[A-Z]{2,6})?\b",
 )
 _PAIR_RE = re.compile(r"\b([A-Z][A-Z0-9]{1,11})/(USDT|USDC|USD|BTC|ETH|KRW|EUR|TRY|FDUSD)\b")
+_CONCAT_PAIR_RE = re.compile(r"\b([A-Z][A-Z0-9]{1,11})(USDT|USDC|USD|BTC|ETH|FDUSD)\b")
 
 
 def parse_events(raw_source: dict, now: datetime | None = None) -> list[dict]:
@@ -44,7 +48,11 @@ def parse_events(raw_source: dict, now: datetime | None = None) -> list[dict]:
     if not _looks_like_announcement_listing_signal(text):
         return []
 
-    trading_start = _extract_time_by_context(text, _looks_like_trading_time_context)
+    is_futures_listing = _looks_like_futures_listing_signal(text)
+    trading_start = _extract_time_by_context(
+        text,
+        _looks_like_futures_trading_time_context if is_futures_listing else _looks_like_trading_time_context,
+    )
     deposit_start = _extract_time_by_context(text, _looks_like_deposit_time_context)
     withdrawal_start = _extract_time_by_context(text, _looks_like_withdrawal_time_context)
     pairs = _extract_pairs(text)
@@ -59,8 +67,10 @@ def parse_events(raw_source: dict, now: datetime | None = None) -> list[dict]:
             deposit_start_time=deposit_start,
             withdrawal_start_time=withdrawal_start,
             pairs=_pairs_for_symbol(pairs, symbol),
+            listing_type=_listing_type_for_text(text),
+            event_family=EVENT_FAMILY_FUTURES_LISTING if is_futures_listing else EVENT_FAMILY_SPOT_LISTING,
         )
-        for symbol in _extract_symbols(text)
+        for symbol in _extract_symbols(text, include_concat_pairs=is_futures_listing)
     ]
 
 
@@ -138,6 +148,23 @@ def _looks_like_announcement_listing_signal(text: str) -> bool:
     )
 
 
+def _looks_like_futures_listing_signal(text: str) -> bool:
+    lowered = text.lower()
+    return "binance" in lowered and any(
+        phrase in lowered
+        for phrase in (
+            "binance futures",
+            "perpetual contract",
+            "usd-m perpetual",
+            "coin-m perpetual",
+            "usdt perpetual",
+            "u-based perpetual",
+            "will launch",
+            "合约",
+        )
+    ) and any(derivative in lowered for derivative in ("futures", "perpetual", "contract", "合约"))
+
+
 def _event_kind(exchange: str, text: str) -> str:
     if exchange == "coinbase" and "roadmap" in text.lower():
         return "roadmap"
@@ -189,6 +216,20 @@ def _looks_like_trading_time_context(context: str) -> bool:
     )
 
 
+def _looks_like_futures_trading_time_context(context: str) -> bool:
+    lowered = context.lower()
+    if not lowered.strip():
+        return True
+    return _looks_like_trading_time_context(context) or any(
+        phrase in lowered
+        for phrase in (
+            "will launch",
+            "launch",
+            "at",
+        )
+    )
+
+
 def _looks_like_deposit_time_context(context: str) -> bool:
     lowered = context.lower()
     return any(phrase in lowered for phrase in ("deposit", "deposits open", "deposit opens"))
@@ -207,16 +248,31 @@ def _format_utc_match(match: re.Match) -> str:
     return parsed.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def _extract_symbols(text: str) -> list[str]:
+def _extract_symbols(text: str, *, include_concat_pairs: bool = False) -> list[str]:
     symbols = []
     for match in _PAREN_SYMBOL_RE.finditer(text):
         symbol = match.group(1).upper()
-        if symbol not in {"UTC", "KST", "UTC8", "GMT"}:
-            symbols.append(symbol)
+        if symbol not in {"UTC", "KST", "UTC8", "GMT"} and not symbol.isdigit():
+            normalized = _normalize_concat_pair_symbol(symbol) if include_concat_pairs else symbol
+            if not include_concat_pairs or not _is_quote_asset_symbol(normalized):
+                symbols.append(normalized)
     for match in _CASH_SYMBOL_RE.finditer(text):
-        symbols.append(match.group(1).upper())
+        symbol = match.group(1).upper()
+        if symbol.isdigit():
+            continue
+        normalized = _normalize_concat_pair_symbol(symbol) if include_concat_pairs else symbol
+        if not include_concat_pairs or not _is_quote_asset_symbol(normalized):
+            symbols.append(normalized)
     for match in _SIMPLE_LISTING_SYMBOL_RE.finditer(text):
-        symbols.append(match.group(1).upper())
+        symbol = match.group(1).upper()
+        if symbol.isdigit():
+            continue
+        normalized = _normalize_concat_pair_symbol(symbol) if include_concat_pairs else symbol
+        if not include_concat_pairs or not _is_quote_asset_symbol(normalized):
+            symbols.append(normalized)
+    if include_concat_pairs:
+        for match in _CONCAT_PAIR_RE.finditer(text):
+            symbols.append(match.group(1).upper())
     return list(dict.fromkeys(symbols))
 
 
@@ -231,6 +287,26 @@ def _pairs_for_symbol(pairs: list[str] | None, symbol: str) -> list[str] | None:
         return None
     matching_pairs = [pair for pair in pairs if pair.split("/", 1)[0] == symbol]
     return matching_pairs or None
+
+
+def _normalize_concat_pair_symbol(symbol: str) -> str:
+    for quote in ("FDUSD", "USDT", "USDC", "USD", "BTC", "ETH"):
+        if symbol.endswith(quote) and len(symbol) > len(quote) + 1:
+            return symbol[: -len(quote)]
+    return symbol
+
+
+def _is_quote_asset_symbol(symbol: str) -> bool:
+    return symbol in {"FDUSD", "USDT", "USDC", "USD", "BTC", "ETH"}
+
+
+def _listing_type_for_text(text: str) -> str:
+    lowered = text.lower()
+    if _looks_like_futures_listing_signal(text):
+        if "perpetual" in lowered or "永续" in lowered:
+            return LISTING_TYPE_PERPETUAL
+        return LISTING_TYPE_FUTURES
+    return LISTING_TYPE_SPOT
 
 
 def _source_precedence(raw_source: dict) -> int:
@@ -257,14 +333,16 @@ def _event_for_symbol(
     deposit_start_time: str | None = None,
     withdrawal_start_time: str | None = None,
     pairs: list[str] | None = None,
+    listing_type: str = LISTING_TYPE_SPOT,
+    event_family: str = EVENT_FAMILY_SPOT_LISTING,
 ) -> dict:
     return {
         "exchange": (raw_source["exchange"] or "").lower(),
         "project_name": raw_source.get("project_name"),
         "token_symbol": symbol,
-        "listing_type": LISTING_TYPE_SPOT,
-        "event_family": EVENT_FAMILY_SPOT_LISTING,
-        "event_kind": event_kind,
+        "listing_type": listing_type,
+        "event_family": event_family,
+        "event_kind": "futures_listing" if event_family == EVENT_FAMILY_FUTURES_LISTING else event_kind,
         "status": status,
         "announcement_url": raw_source.get("source_url"),
         "announcement_title": raw_source.get("title"),

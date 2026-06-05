@@ -22,7 +22,7 @@ from exchange_listings.parsers import parse_events
 
 
 class ExchangeListingAdapterTests(unittest.TestCase):
-    def test_binance_api_sources_keep_spot_listing_titles(self):
+    def test_binance_api_sources_keep_spot_and_futures_listing_titles(self):
         payload = {
             "data": {
                 "articles": [
@@ -41,10 +41,50 @@ class ExchangeListingAdapterTests(unittest.TestCase):
 
         sources = parse_binance_sources(json.dumps(payload), limit=5)
 
-        self.assertEqual(1, len(sources))
+        self.assertEqual(2, len(sources))
         self.assertEqual("binance", sources[0]["exchange"])
         self.assertEqual("spot-code", sources[0]["external_id"])
         self.assertIn("ALP/USDT", sources[0]["raw_text"])
+        self.assertEqual("futures-code", sources[1]["external_id"])
+        self.assertEqual("Binance Futures Will Launch ALPUSDT Perpetual Contract", sources[1]["raw_text"])
+
+    def test_binance_live_sources_enrich_announcement_body_from_detail_api(self):
+        list_payload = {
+            "data": {
+                "articles": [
+                    {
+                        "code": "detail-code",
+                        "title": "Binance Futures Will Launch USDⓈ-Margined CTRUSDT Perpetual Contract (2026-05-28)",
+                        "body": None,
+                    },
+                ]
+            }
+        }
+        detail_payload = {
+            "data": {
+                "body": json.dumps(
+                    {
+                        "node": "root",
+                        "child": [
+                            {
+                                "node": "text",
+                                "text": "2026-05-28 09:30 (UTC): CTRUSDT Perpetual Contract",
+                            }
+                        ],
+                    }
+                )
+            }
+        }
+
+        def fake_fetch(url):
+            if "article/detail/query" in url:
+                return json.dumps(detail_payload)
+            return json.dumps(list_payload)
+
+        sources = fetch_live_sources("binance", fetch_text=fake_fetch, limit=1, max_pages=1)
+
+        self.assertEqual(1, len(sources))
+        self.assertIn("2026-05-28 09:30 (UTC)", sources[0]["raw_text"])
 
     def test_okx_sources_are_extracted_from_help_links(self):
         html = """

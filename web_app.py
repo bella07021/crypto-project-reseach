@@ -823,6 +823,14 @@ def exchange_label_from_db_key(value: str) -> str:
     return EXCHANGE_DB_LABELS.get(key, value.strip())
 
 
+def exchange_label_from_listing_event(exchange: str, listing_type: str, event_family: str) -> str:
+    if exchange.strip().lower() == "binance" and (
+        listing_type in {"futures", "perpetual"} or event_family == "futures_listing"
+    ):
+        return "BN 合约"
+    return exchange_label_from_db_key(exchange)
+
+
 def pre_tge_exchange_progress_from_db(row: dict[str, Any], db_path: Path | str = EXCHANGE_LISTINGS_DB_PATH) -> dict[str, Any]:
     token_symbol = str(row.get("token_ticker") or row.get("token_symbol") or "").strip().upper()
     project_name = str(row.get("project_name") or "").strip()
@@ -843,6 +851,8 @@ def pre_tge_exchange_progress_from_db(row: dict[str, Any], db_path: Path | str =
                     le.exchange,
                     le.project_name,
                     le.token_symbol,
+                    le.listing_type,
+                    le.event_family,
                     le.event_kind,
                     le.status,
                     le.announcement_url,
@@ -858,7 +868,11 @@ def pre_tge_exchange_progress_from_db(row: dict[str, Any], db_path: Path | str =
                     (? != '' AND (UPPER(le.token_symbol) = ? OR UPPER(na.canonical_symbol) = ?))
                     OR (? != '' AND (LOWER(le.project_name) = LOWER(?) OR LOWER(na.project_name) = LOWER(?)))
                 )
-                  AND le.listing_type = 'spot'
+                  AND (
+                    le.listing_type = 'spot'
+                    OR (le.exchange = 'binance' AND le.listing_type IN ('futures', 'perpetual'))
+                    OR (le.exchange = 'binance' AND le.event_family = 'futures_listing')
+                  )
                   AND le.status != 'unknown'
                 ORDER BY le.source_precedence DESC, le.updated_at DESC
                 """,
@@ -871,8 +885,8 @@ def pre_tge_exchange_progress_from_db(row: dict[str, Any], db_path: Path | str =
     signals: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
     for event in events:
-        exchange, event_project_name, event_symbol, event_kind, status, url, title, published_at, trading_start_time, source_type, precedence, updated_at = event
-        label = exchange_label_from_db_key(str(exchange or ""))
+        exchange, event_project_name, event_symbol, listing_type, event_family, event_kind, status, url, title, published_at, trading_start_time, source_type, precedence, updated_at = event
+        label = exchange_label_from_listing_event(str(exchange or ""), str(listing_type or ""), str(event_family or ""))
         key = (label, str(event_symbol or ""), str(status or ""))
         if key in seen:
             continue
@@ -884,6 +898,8 @@ def pre_tge_exchange_progress_from_db(row: dict[str, Any], db_path: Path | str =
                 "exchange": label,
                 "project_name": event_project_name or "",
                 "token_symbol": event_symbol or "",
+                "listing_type": listing_type or "",
+                "event_family": event_family or "",
                 "event_kind": event_kind or "",
                 "status": status or "",
                 "announcement_url": url or "",

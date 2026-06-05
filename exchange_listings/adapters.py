@@ -46,6 +46,7 @@ def fetch_live_sources(
     browser_fetch = fetch_browser_text or fetch_text or _fetch_browser_text
     if exchange == "binance":
         sources = _fetch_paginated(fetch, _binance_url, parse_binance_sources, limit=limit, max_pages=max_pages, cutoff=cutoff)
+        sources = _enrich_binance_sources(fetch, sources)
         return _filter_recent_sources(sources, cutoff, limit)
     if exchange == "okx":
         sources = _fetch_paginated(fetch, _okx_url, parse_okx_sources, limit=limit, max_pages=max_pages, cutoff=cutoff)
@@ -127,7 +128,7 @@ def parse_binance_sources(payload: str, *, limit: int) -> list[dict]:
     sources = []
     for article in articles:
         title = article.get("title") or ""
-        if not _looks_like_spot_listing_title(title):
+        if not _looks_like_binance_listing_title(title):
             continue
         code = article.get("code") or str(article.get("id") or "")
         raw_text = _strip_html(article.get("body") or title)
@@ -144,6 +145,30 @@ def parse_binance_sources(payload: str, *, limit: int) -> list[dict]:
         if len(sources) >= limit:
             break
     return sources
+
+
+def _enrich_binance_sources(fetch, sources: list[dict]) -> list[dict]:
+    enriched = []
+    for source in sources:
+        code = source.get("external_id")
+        if not code:
+            enriched.append(source)
+            continue
+        try:
+            detail = json.loads(fetch(_binance_detail_url(str(code))))
+            detail_data = detail.get("data") or {}
+            body_text = _extract_binance_article_body_text(detail_data.get("body"))
+        except Exception:
+            body_text = ""
+            detail_data = {}
+        if body_text:
+            raw_payload = source.get("raw_payload_json") or {}
+            if isinstance(raw_payload, dict):
+                raw_payload = {**raw_payload, "detail": detail_data}
+            enriched.append({**source, "raw_text": _collapse_space(body_text), "raw_payload_json": raw_payload})
+        else:
+            enriched.append(source)
+    return enriched
 
 
 def parse_okx_sources(page_html: str, *, limit: int) -> list[dict]:
@@ -506,6 +531,10 @@ def _binance_url(page: int) -> str:
     )
 
 
+def _binance_detail_url(article_code: str) -> str:
+    return f"https://www.binance.com/bapi/composite/v1/public/cms/article/detail/query?articleCode={article_code}"
+
+
 def _okx_url(page: int) -> str:
     if page == 1:
         return OKX_LIST_URL
@@ -593,6 +622,31 @@ def _filter_recent_sources(sources: list[dict], cutoff: datetime, limit: int) ->
     return filtered
 
 
+def _extract_binance_article_body_text(body) -> str:
+    if not body:
+        return ""
+    if isinstance(body, str):
+        stripped = body.strip()
+        if stripped.startswith("{") or stripped.startswith("["):
+            try:
+                return _extract_binance_article_body_text(json.loads(stripped))
+            except json.JSONDecodeError:
+                pass
+        return _strip_html(stripped)
+    if isinstance(body, dict):
+        parts = []
+        if body.get("text"):
+            parts.append(str(body["text"]))
+        for child in body.get("child", []) or []:
+            child_text = _extract_binance_article_body_text(child)
+            if child_text:
+                parts.append(child_text)
+        return _collapse_space(" ".join(parts))
+    if isinstance(body, list):
+        return _collapse_space(" ".join(_extract_binance_article_body_text(item) for item in body))
+    return ""
+
+
 def _source(
     exchange: str,
     source_url: str | None,
@@ -659,6 +713,26 @@ def _looks_like_spot_listing_title(title: str) -> bool:
             "现货交易",
         )
     )
+
+
+def _looks_like_binance_listing_title(title: str) -> bool:
+    return _looks_like_spot_listing_title(title) or _looks_like_binance_futures_listing_title(title)
+
+
+def _looks_like_binance_futures_listing_title(title: str) -> bool:
+    lowered = title.lower()
+    return "binance" in lowered and any(
+        phrase in lowered
+        for phrase in (
+            "futures will launch",
+            "will launch",
+            "perpetual contract",
+            "usd-m perpetual",
+            "coin-m perpetual",
+            "usdt perpetual",
+            "合约",
+        )
+    ) and any(derivative in lowered for derivative in ("futures", "perpetual", "contract", "合约"))
 
 
 def _strip_upbit_category_prefix(title: str) -> str:

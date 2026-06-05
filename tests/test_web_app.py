@@ -449,6 +449,48 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(progress["pre_tge_listing_signals"][0]["exchange"], "Coinbase")
         self.assertEqual(progress["pre_tge_listing_signals"][0]["announcement_title"], "Coinbase roadmap: Nexus (NEX)")
 
+    def test_pre_tge_exchange_progress_reads_binance_perpetual_listing_database_event(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "exchange_listings.sqlite"
+            exchange_listing_db.init_db(db_path)
+            with exchange_listing_db.connect(db_path) as conn:
+                asset_id = exchange_listing_db.upsert_normalized_asset(
+                    conn,
+                    {
+                        "symbol": "BILL",
+                        "project_name": "Billions Network",
+                        "identity_confidence": "high",
+                    },
+                )
+                exchange_listing_db.upsert_listing_event(
+                    conn,
+                    {
+                        "exchange": "binance",
+                        "normalized_asset_id": asset_id,
+                        "project_name": "Billions Network",
+                        "token_symbol": "BILL",
+                        "listing_type": "perpetual",
+                        "event_family": "futures_listing",
+                        "event_kind": "futures_listing",
+                        "status": "trading_started",
+                        "announcement_url": "https://www.binance.com/en/support/announcement/1",
+                        "announcement_title": "Binance Futures Will Launch BILLUSDT Perpetual Contract",
+                        "announcement_published_at": "2026-05-04T00:00:00Z",
+                        "trading_start_time": "2026-05-05T10:00:00Z",
+                        "source_type": "exchange_announcement",
+                        "source_precedence": 30,
+                    },
+                )
+
+            progress = pre_tge_exchange_progress_from_db(
+                {"token_ticker": "BILL", "project_name": "Billions Network"},
+                db_path,
+            )
+
+        self.assertEqual(progress["pre_tge_listing_signals"][0]["exchange"], "BN 合约")
+        self.assertEqual(progress["pre_tge_listing_signals"][0]["listing_type"], "perpetual")
+        self.assertEqual(progress["pre_tge_listing_signals"][0]["trading_start_time"], "2026-05-05T10:00:00Z")
+
     def test_mainstream_spot_exchange_tier_scores_once(self):
         progress = exchange_progress_from_cmc(
             [
