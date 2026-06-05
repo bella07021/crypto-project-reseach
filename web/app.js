@@ -9,6 +9,7 @@ const form = document.querySelector("#scoreForm");
 const submitButton = document.querySelector("#submitButton");
 const reportMount = document.querySelector("#reportMount");
 const dashboardBody = document.querySelector("#dashboardRows");
+const topbar = document.querySelector("#topbar");
 const healthStatus = document.querySelector("#healthStatus");
 
 function numberText(value) {
@@ -152,6 +153,7 @@ function switchView(name) {
   document.querySelectorAll(".view").forEach((view) => view.classList.remove("active"));
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.view === name));
   document.querySelector(`#${name}View`).classList.add("active");
+  if (topbar) topbar.hidden = name !== "add";
   if (name === "dashboard") loadDashboard();
 }
 
@@ -547,13 +549,30 @@ function tgeSummary(row) {
   return "未 TGE";
 }
 
+function dashboardTgeSortValue(row) {
+  const dateText = String(row.tge_date || "").trim();
+  if (!dateText) return -Infinity;
+  const timestamp = Date.parse(`${dateText.split("T", 1)[0]}T00:00:00Z`);
+  return Number.isNaN(timestamp) ? -Infinity : timestamp;
+}
+
+function sortedDashboardRows() {
+  return state.dashboardRows
+    .map((row, index) => ({ row, index }))
+    .sort((left, right) => {
+      const byDate = dashboardTgeSortValue(right.row) - dashboardTgeSortValue(left.row);
+      return byDate || left.index - right.index;
+    })
+    .map((item) => item.row);
+}
+
 function renderDashboard() {
   dashboardBody.innerHTML = "";
   if (!state.dashboardRows.length) {
     dashboardBody.innerHTML = '<tr><td colspan="7">暂无项目。</td></tr>';
     return;
   }
-  for (const row of state.dashboardRows) {
+  for (const row of sortedDashboardRows()) {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td><button type="button" class="ticker-link">${row.token_ticker || "--"}</button></td>
@@ -583,6 +602,7 @@ function renderDashboard() {
 }
 
 async function checkHealth() {
+  if (!healthStatus) return;
   try {
     const response = await fetch("/api/health");
     const payload = await response.json();
