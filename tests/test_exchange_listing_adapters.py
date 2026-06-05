@@ -354,10 +354,109 @@ class ExchangeListingAdapterTests(unittest.TestCase):
             [
                 ("curl", "https://announcements.bybit.com/en/?category=new_crypto&page=1"),
                 ("browser", "https://announcements.bybit.com/en/?category=new_crypto&page=1"),
+                ("browser", "https://announcements.bybit.com/article/spot"),
             ],
             calls,
         )
         self.assertEqual(["s1"], [source["external_id"] for source in sources])
+
+    def test_bybit_live_fetcher_falls_back_to_browser_fetch_when_curl_is_access_denied(self):
+        calls = []
+        next_data = {
+            "props": {
+                "pageProps": {
+                    "articleInitEntity": {
+                        "list": [
+                            {
+                                "title": "New Spot Listing: Example Token (EXT)",
+                                "description": "Bybit will list Example Token (EXT) for spot trading.",
+                                "topics": ["Spot", "Spot Listings"],
+                                "url": "/article/spot",
+                                "objectID": "s1",
+                                "publish_time": 1780000100,
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+        html = f'<script id="__NEXT_DATA__" type="application/json">{json.dumps(next_data)}</script>'
+
+        def fake_fetch(url):
+            calls.append(("curl", url))
+            return "<h1>Access Denied</h1>"
+
+        def fake_browser_fetch(url):
+            calls.append(("browser", url))
+            return html
+
+        sources = fetch_live_sources(
+            "bybit",
+            limit=2,
+            max_pages=1,
+            fetch_text=fake_fetch,
+            fetch_browser_text=fake_browser_fetch,
+        )
+
+        self.assertEqual(["s1"], [source["external_id"] for source in sources])
+        self.assertEqual(
+            [
+                ("curl", "https://announcements.bybit.com/en/?category=new_crypto&page=1"),
+                ("browser", "https://announcements.bybit.com/en/?category=new_crypto&page=1"),
+                ("browser", "https://announcements.bybit.com/article/spot"),
+            ],
+            calls,
+        )
+
+    def test_bybit_live_sources_enrich_detail_published_time(self):
+        list_data = {
+            "props": {
+                "pageProps": {
+                    "articleInitEntity": {
+                        "list": [
+                            {
+                                "title": "Bybit to List Billions Network (BILL) on Spot",
+                                "description": "Bybit is excited to announce the upcoming listing of BILL.",
+                                "topics": ["Spot", "Spot Listings"],
+                                "url": "/article/bybit-to-list-billions-network-bill-on-spot",
+                                "objectID": "bill",
+                                "publish_time": 1780000000,
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+        list_html = f'<script id="__NEXT_DATA__" type="application/json">{json.dumps(list_data)}</script>'
+        detail_html = """
+        <meta property="article:published_time" content="2026-05-04T05:38:40.000Z">
+        <meta property="og:description" content="Bybit is excited to announce the upcoming listing of BILL.">
+        <div class="article-detail">
+          <h1>Bybit to List Billions Network (BILL) on Spot</h1>
+          <span class="article-detail-date">May 4, 2026</span>
+          <div>Disclaimer: Listing timeline BILL listing: May 4, 2026, 8:00AM UTC</div>
+        </div>
+        """
+
+        def fake_fetch(url):
+            raise subprocess.CalledProcessError(56, ["curl", url])
+
+        def fake_browser_fetch(url):
+            if "/article/" in url:
+                return detail_html
+            return list_html
+
+        sources = fetch_live_sources(
+            "bybit",
+            limit=1,
+            max_pages=1,
+            fetch_text=fake_fetch,
+            fetch_browser_text=fake_browser_fetch,
+        )
+
+        self.assertEqual(1, len(sources))
+        self.assertEqual("2026-05-04T05:38:40Z", sources[0]["published_at"])
+        self.assertIn("BILL listing: May 4, 2026, 8:00AM UTC", sources[0]["raw_text"])
 
     def test_coinbase_sources_extract_roadmap_posts_from_x_search_html(self):
         html = """

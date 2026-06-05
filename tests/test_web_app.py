@@ -593,6 +593,24 @@ class WebAppTests(unittest.TestCase):
                         "source_precedence": 30,
                     },
                 )
+                exchange_listing_db.upsert_listing_event(
+                    conn,
+                    {
+                        "exchange": "bybit",
+                        "normalized_asset_id": asset_id,
+                        "project_name": "",
+                        "token_symbol": "BILL",
+                        "listing_type": "spot",
+                        "event_family": "spot_listing",
+                        "event_kind": "listing_announcement",
+                        "status": "announced",
+                        "announcement_url": "https://announcements.bybit.com/article/1",
+                        "announcement_title": "Bybit to List Billions Network (BILL) on Spot",
+                        "announcement_published_at": "2026-05-04T05:38:40Z",
+                        "source_type": "exchange_announcement",
+                        "source_precedence": 30,
+                    },
+                )
 
             progress = pre_tge_exchange_progress_from_db(
                 {"token_ticker": "BILL", "project_name": "Billions Network", "tge_date": "2026-05-04"},
@@ -601,6 +619,49 @@ class WebAppTests(unittest.TestCase):
 
         self.assertEqual(progress["pre_tge_exchange_score"], 10.0)
         self.assertEqual(progress["pre_tge_listing_signals"], [])
+
+    def test_pre_tge_exchange_progress_includes_same_day_listing_database_events(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "exchange_listings.sqlite"
+            exchange_listing_db.init_db(db_path)
+            with exchange_listing_db.connect(db_path) as conn:
+                asset_id = exchange_listing_db.upsert_normalized_asset(
+                    conn,
+                    {
+                        "symbol": "BILL",
+                        "project_name": "Billions Network",
+                        "identity_confidence": "high",
+                    },
+                )
+                exchange_listing_db.upsert_listing_event(
+                    conn,
+                    {
+                        "exchange": "bybit",
+                        "normalized_asset_id": asset_id,
+                        "project_name": "Billions Network",
+                        "token_symbol": "BILL",
+                        "listing_type": "spot",
+                        "event_family": "spot_listing",
+                        "event_kind": "listing_announcement",
+                        "status": "trading_started",
+                        "announcement_url": "https://announcements.bybit.com/article/1",
+                        "announcement_title": "Bybit to List Billions Network (BILL) on Spot",
+                        "announcement_published_at": "2026-05-04T05:38:40Z",
+                        "trading_start_time": "2026-05-04T08:00:00Z",
+                        "source_type": "exchange_announcement",
+                        "source_precedence": 30,
+                    },
+                )
+
+            progress = pre_tge_exchange_progress_from_db(
+                {"token_ticker": "BILL", "project_name": "Billions Network", "tge_date": "2026-05-04"},
+                db_path,
+            )
+
+        self.assertEqual(progress["pre_tge_exchange_score"], 78.0)
+        self.assertEqual(1, len(progress["pre_tge_listing_signals"]))
+        self.assertEqual(progress["pre_tge_listing_signals"][0]["exchange"], "Bybit")
+        self.assertEqual(progress["pre_tge_listing_signals"][0]["trading_start_time"], "2026-05-04T08:00:00Z")
 
     def test_mainstream_spot_exchange_tier_scores_once(self):
         progress = exchange_progress_from_cmc(

@@ -77,6 +77,22 @@ class ExchangeListingParserTests(unittest.TestCase):
         self.assertEqual(STATUS_TRADING_SOON, events[0]["status"])
         self.assertEqual("2026-05-30T12:00:00Z", events[0]["trading_start_time"])
 
+    def test_bybit_natural_language_listing_time_is_parsed(self):
+        raw_source = {
+            "exchange": "bybit",
+            "source_type": "exchange_announcement",
+            "source_url": "https://announcements.bybit.com/article/bill",
+            "title": "Bybit to List Billions Network (BILL) on Spot",
+            "raw_text": "Bybit will list Billions Network (BILL). Listing timeline BILL listing: May 4, 2026, 8:00AM UTC",
+            "published_at": "2026-05-04T05:38:40Z",
+        }
+
+        events = parse_events(raw_source, now=self.fixed_now)
+
+        self.assertEqual(1, len(events))
+        self.assertEqual("BILL", events[0]["token_symbol"])
+        self.assertEqual("2026-05-04T08:00:00Z", events[0]["trading_start_time"])
+
     def test_binance_futures_announcement_produces_perpetual_event(self):
         raw_source = {
             "exchange": "binance",

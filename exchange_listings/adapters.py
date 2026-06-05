@@ -61,6 +61,7 @@ def fetch_live_sources(
             max_pages=max_pages,
             cutoff=cutoff,
         )
+        sources = _enrich_bybit_sources(browser_fetch, sources)
         return _filter_recent_sources(sources, cutoff, limit)
     if exchange == "kucoin":
         sources = _fetch_paginated(fetch, _kucoin_url, parse_kucoin_sources, limit=limit, max_pages=max_pages, cutoff=cutoff)
@@ -297,6 +298,38 @@ def parse_bybit_sources(page_html: str, *, limit: int) -> list[dict]:
     return sources
 
 
+def _enrich_bybit_sources(fetch, sources: list[dict]) -> list[dict]:
+    enriched = []
+    for source in sources:
+        url = source.get("source_url")
+        if not url:
+            enriched.append(source)
+            continue
+        try:
+            detail_html = fetch(str(url))
+        except Exception:
+            enriched.append(source)
+            continue
+        published_at = _bybit_detail_published_at(detail_html) or source.get("published_at")
+        detail_text = _bybit_detail_text(detail_html)
+        raw_text = _collapse_space(f"{source.get('raw_text') or ''} {detail_text}")
+        enriched.append({**source, "published_at": published_at, "raw_text": raw_text or source.get("raw_text", "")})
+    return enriched
+
+
+def _bybit_detail_published_at(page_html: str) -> str | None:
+    return _normalize_iso(_meta_content(page_html, "article:published_time"))
+
+
+def _bybit_detail_text(page_html: str) -> str:
+    text = _strip_html(page_html)
+    start = text.find("Disclaimer:")
+    if start == -1:
+        description = _meta_content(page_html, "og:description") or _meta_content(page_html, "description") or ""
+        return _collapse_space(description)
+    return _collapse_space(text[start:start + 4000])
+
+
 def parse_upbit_sources(page_html: str, *, limit: int) -> list[dict]:
     sources = []
     seen = set()
@@ -505,11 +538,13 @@ def _fetch_paginated(fetch, url_for_page, parser, *, limit: int, max_pages: int,
 
 def _fetch_with_browser_fallback(fetch, browser_fetch, url_for_page, parser, *, limit: int, max_pages: int, cutoff: datetime | None = None) -> list[dict]:
     try:
-        return _fetch_paginated(fetch, url_for_page, parser, limit=limit, max_pages=max_pages, cutoff=cutoff)
+        sources = _fetch_paginated(fetch, url_for_page, parser, limit=limit, max_pages=max_pages, cutoff=cutoff)
+        if sources or browser_fetch is fetch:
+            return sources
     except Exception:
         if browser_fetch is fetch:
             raise
-        return _fetch_paginated(browser_fetch, url_for_page, parser, limit=limit, max_pages=max_pages, cutoff=cutoff)
+    return _fetch_paginated(browser_fetch, url_for_page, parser, limit=limit, max_pages=max_pages, cutoff=cutoff)
 
 
 def _page_is_older_than_cutoff(sources: list[dict], cutoff: datetime | None) -> bool:
@@ -1004,6 +1039,18 @@ def _normalize_iso(value: str | None) -> str | None:
         return None
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     return parsed.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _meta_content(page_html: str, name: str) -> str | None:
+    for match in re.finditer(r"<meta\b[^>]*>", page_html, flags=re.IGNORECASE):
+        tag = match.group(0)
+        property_match = re.search(r"\b(?:property|name)=[\"']([^\"']+)[\"']", tag, flags=re.IGNORECASE)
+        if not property_match or property_match.group(1) != name:
+            continue
+        content_match = re.search(r"\bcontent=[\"']([^\"']*)[\"']", tag, flags=re.IGNORECASE)
+        if content_match:
+            return html.unescape(content_match.group(1))
+    return None
 
 
 def _iso_from_datetime_text(value: str | None, *, tz_hours: int = 0) -> str | None:

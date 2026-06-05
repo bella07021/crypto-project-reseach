@@ -900,37 +900,34 @@ def pre_tge_exchange_progress_from_db(row: dict[str, Any], db_path: Path | str =
         events = []
 
     labels: list[str] = []
-    signals: list[dict[str, Any]] = []
-    seen: set[tuple[str, str, str]] = set()
+    signals_by_label: dict[str, dict[str, Any]] = {}
     for event in events:
         exchange, event_project_name, event_symbol, listing_type, event_family, event_kind, status, url, title, published_at, trading_start_time, source_type, precedence, updated_at = event
         if not is_pre_tge_listing_event(published_at, trading_start_time, tge_date):
             continue
         label = exchange_label_from_listing_event(str(exchange or ""), str(listing_type or ""), str(event_family or ""))
-        key = (label, str(event_symbol or ""), str(status or ""))
-        if key in seen:
-            continue
-        seen.add(key)
         if label not in labels:
             labels.append(label)
-        signals.append(
-            {
-                "exchange": label,
-                "project_name": event_project_name or "",
-                "token_symbol": event_symbol or "",
-                "listing_type": listing_type or "",
-                "event_family": event_family or "",
-                "event_kind": event_kind or "",
-                "status": status or "",
-                "announcement_url": url or "",
-                "announcement_title": title or "",
-                "announcement_published_at": published_at or "",
-                "trading_start_time": trading_start_time or "",
-                "source_type": source_type or "",
-                "source_precedence": precedence or 0,
-                "updated_at": updated_at or "",
-            }
-        )
+        signal = {
+            "exchange": label,
+            "project_name": event_project_name or "",
+            "token_symbol": event_symbol or "",
+            "listing_type": listing_type or "",
+            "event_family": event_family or "",
+            "event_kind": event_kind or "",
+            "status": status or "",
+            "announcement_url": url or "",
+            "announcement_title": title or "",
+            "announcement_published_at": published_at or "",
+            "trading_start_time": trading_start_time or "",
+            "source_type": source_type or "",
+            "source_precedence": precedence or 0,
+            "updated_at": updated_at or "",
+        }
+        existing = signals_by_label.get(label)
+        if _prefer_exchange_listing_event(existing, signal):
+            signals_by_label[label] = signal
+    signals = [signals_by_label[label] for label in labels if label in signals_by_label]
 
     return {
         "pre_tge_exchange_score": pre_tge_exchange_quality_score(labels),

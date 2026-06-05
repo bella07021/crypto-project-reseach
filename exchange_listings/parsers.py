@@ -26,6 +26,13 @@ _UTC_TIME_RE = re.compile(
     r"\b(?P<date>\d{4}-\d{2}-\d{2})[T ](?P<time>\d{2}:\d{2}(?::\d{2})?)\s*(?:\(\s*)?(?P<zone>Z|UTC)(?:\s*\))?",
     re.IGNORECASE,
 )
+_MONTH_TIME_RE = re.compile(
+    r"\b(?P<month>Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|"
+    r"Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+"
+    r"(?P<day>\d{1,2}),\s*(?P<year>\d{4}),\s*"
+    r"(?P<hour>\d{1,2}):(?P<minute>\d{2})\s*(?P<ampm>AM|PM)?\s*UTC\b",
+    re.IGNORECASE,
+)
 _SIMPLE_LISTING_SYMBOL_RE = re.compile(
     r"\b(?i:will list|to list|listing of|will launch)\s+([A-Z][A-Z0-9]{1,11})(?:/[A-Z]{2,6})?\b",
 )
@@ -184,10 +191,15 @@ def _announcement_status(trading_start_time: str | None, now: datetime | None) -
 
 
 def _extract_time_by_context(text: str, context_predicate) -> str | None:
+    matches = []
     for match in _UTC_TIME_RE.finditer(text):
-        context = _time_context_before(text, match.start())
+        matches.append((match.start(), _format_utc_match(match)))
+    for match in _MONTH_TIME_RE.finditer(text):
+        matches.append((match.start(), _format_month_time_match(match)))
+    for timestamp_start, timestamp in sorted(matches):
+        context = _time_context_before(text, timestamp_start)
         if context_predicate(context):
-            return _format_utc_match(match)
+            return timestamp
     return None
 
 
@@ -212,6 +224,7 @@ def _looks_like_trading_time_context(context: str) -> bool:
             "trading will start",
             "spot trading",
             "start trading",
+            "listing",
         )
     )
 
@@ -246,6 +259,24 @@ def _format_utc_match(match: re.Match) -> str:
         time_value = f"{time_value}:00"
     parsed = datetime.fromisoformat(f"{match.group('date')}T{time_value}+00:00")
     return parsed.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _format_month_time_match(match: re.Match) -> str:
+    hour = int(match.group("hour"))
+    minute = int(match.group("minute"))
+    ampm = (match.group("ampm") or "").upper()
+    if ampm == "PM" and hour != 12:
+        hour += 12
+    elif ampm == "AM" and hour == 12:
+        hour = 0
+    value = f"{match.group('month')} {match.group('day')} {match.group('year')} {hour:02d}:{minute:02d}"
+    for date_format in ("%B %d %Y %H:%M", "%b %d %Y %H:%M"):
+        try:
+            parsed = datetime.strptime(value, date_format).replace(tzinfo=timezone.utc)
+            return parsed.isoformat().replace("+00:00", "Z")
+        except ValueError:
+            continue
+    return ""
 
 
 def _extract_symbols(text: str, *, include_concat_pairs: bool = False) -> list[str]:
