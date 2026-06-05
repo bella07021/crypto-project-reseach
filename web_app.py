@@ -857,6 +857,7 @@ def pre_tge_exchange_progress_from_db(row: dict[str, Any], db_path: Path | str =
             "pre_tge_exchange_score": 10.0,
             "pre_tge_exchange_source": "exchange_listings_db",
             "pre_tge_listing_signals": [],
+            "exchange_listing_signals": [],
         }
 
     path = Path(db_path)
@@ -901,13 +902,11 @@ def pre_tge_exchange_progress_from_db(row: dict[str, Any], db_path: Path | str =
 
     labels: list[str] = []
     signals_by_label: dict[str, dict[str, Any]] = {}
+    listing_labels: list[str] = []
+    listing_signals_by_label: dict[str, dict[str, Any]] = {}
     for event in events:
         exchange, event_project_name, event_symbol, listing_type, event_family, event_kind, status, url, title, published_at, trading_start_time, source_type, precedence, updated_at = event
-        if not is_pre_tge_listing_event(published_at, trading_start_time, tge_date):
-            continue
         label = exchange_label_from_listing_event(str(exchange or ""), str(listing_type or ""), str(event_family or ""))
-        if label not in labels:
-            labels.append(label)
         signal = {
             "exchange": label,
             "project_name": event_project_name or "",
@@ -924,15 +923,27 @@ def pre_tge_exchange_progress_from_db(row: dict[str, Any], db_path: Path | str =
             "source_precedence": precedence or 0,
             "updated_at": updated_at or "",
         }
+        if label not in listing_labels:
+            listing_labels.append(label)
+        existing_listing = listing_signals_by_label.get(label)
+        if _prefer_exchange_listing_event(existing_listing, signal):
+            listing_signals_by_label[label] = signal
+
+        if not is_pre_tge_listing_event(published_at, trading_start_time, tge_date):
+            continue
+        if label not in labels:
+            labels.append(label)
         existing = signals_by_label.get(label)
         if _prefer_exchange_listing_event(existing, signal):
             signals_by_label[label] = signal
     signals = [signals_by_label[label] for label in labels if label in signals_by_label]
+    listing_signals = [listing_signals_by_label[label] for label in listing_labels if label in listing_signals_by_label]
 
     return {
         "pre_tge_exchange_score": pre_tge_exchange_quality_score(labels),
         "pre_tge_exchange_source": "exchange_listings_db",
         "pre_tge_listing_signals": signals,
+        "exchange_listing_signals": listing_signals,
     }
 
 
@@ -1034,7 +1045,7 @@ def exchange_listing_details(row: dict[str, Any]) -> list[dict[str, Any]]:
         existing = events_by_group.get(group)
         if _prefer_exchange_listing_event(existing, event):
             events_by_group[group] = event
-    for signal in row.get("pre_tge_listing_signals", []) or []:
+    for signal in (row.get("exchange_listing_signals", []) or []) + (row.get("pre_tge_listing_signals", []) or []):
         group = _exchange_event_group(
             " ".join(
                 [

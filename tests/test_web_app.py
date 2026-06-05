@@ -619,6 +619,8 @@ class WebAppTests(unittest.TestCase):
 
         self.assertEqual(progress["pre_tge_exchange_score"], 10.0)
         self.assertEqual(progress["pre_tge_listing_signals"], [])
+        self.assertEqual(progress["exchange_listing_signals"][0]["exchange"], "BN 合约")
+        self.assertEqual(progress["exchange_listing_signals"][0]["trading_start_time"], "2026-05-07T08:15:00Z")
 
     def test_pre_tge_exchange_progress_includes_same_day_listing_database_events(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -662,6 +664,27 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(1, len(progress["pre_tge_listing_signals"]))
         self.assertEqual(progress["pre_tge_listing_signals"][0]["exchange"], "Bybit")
         self.assertEqual(progress["pre_tge_listing_signals"][0]["trading_start_time"], "2026-05-04T08:00:00Z")
+
+    def test_exchange_listing_details_use_full_listing_signals_for_post_tge_times(self):
+        details = exchange_listing_details(
+            {
+                "token_ticker": "BILL",
+                "tge_date": "2026-05-04",
+                "listed_exchanges": ["BN 合约"],
+                "roadmap_events": [],
+                "pre_tge_listing_signals": [],
+                "exchange_listing_signals": [
+                    {
+                        "exchange": "BN 合约",
+                        "event_kind": "futures_listing",
+                        "announcement_title": "Binance Futures Will Launch BILLUSDT Perpetual Contract",
+                        "trading_start_time": "2026-05-07T08:15:00Z",
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(details[0], {"exchange": "BN 合约", "listed_at": "2026-05-07", "days_after_tge": 3})
 
     def test_mainstream_spot_exchange_tier_scores_once(self):
         progress = exchange_progress_from_cmc(
