@@ -1380,6 +1380,54 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(payload["request"]["status"], "done")
         self.assertEqual(payload["assessment"]["token_ticker"], "NEX")
 
+    def test_request_status_payload_refreshes_assessment_from_cmc_markets(self):
+        requests = [
+            {
+                "request_id": "req1",
+                "status": "done",
+                "token_ticker": "QAIT",
+                "project_name": "SEALCOIN",
+                "x_handle": "Sealcoin_QAIT",
+                "rootdata_url": "https://cn.rootdata.com/projects/detail/SEALCOIN?k=MjQ2NDA%3D",
+            }
+        ]
+        history = [
+            {
+                "x_handle": "Sealcoin_QAIT",
+                "rootdata_url": "https://www.rootdata.com/Projects/detail/SEALCOIN?k=MjQ2NDA%3D",
+                "token_ticker": "QAIT",
+                "project_name": "SEALCOIN",
+                "tge_status": "未 TGE",
+                "exchange_source": "RootData",
+                "listed_exchanges": [],
+                "exchange_score": 10.0,
+            }
+        ]
+
+        with patch(
+            "web_app.project_exchange_progress",
+            return_value={
+                "exchange_score": 55.0,
+                "exchange_progress": 55.0,
+                "exchange_raw_score": 55.0,
+                "pre_tge_exchange_score": 55.0,
+                "exchange_source": "CoinMarketCap Data API",
+                "listed_exchanges": ["KuCoin", "Gate", "MEXC"],
+            },
+        ), patch(
+            "web_app.pre_tge_exchange_progress_from_db",
+            return_value={
+                "pre_tge_exchange_score": 40.0,
+                "pre_tge_exchange_source": "exchange_listings_db",
+                "pre_tge_listing_signals": [],
+            },
+        ):
+            payload = request_status_payload("req1", requests, history)
+
+        self.assertEqual(payload["assessment"]["tge_status"], "已 TGE")
+        self.assertEqual(payload["assessment"]["exchange_source"], "CoinMarketCap Data API")
+        self.assertEqual(payload["assessment"]["listed_exchanges"], ["KuCoin", "Gate", "MEXC"])
+
     def test_request_status_payload_overrides_assessment_identity_from_request(self):
         requests = [
             {

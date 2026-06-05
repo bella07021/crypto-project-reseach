@@ -1331,6 +1331,16 @@ def dashboard_exchange_progress(row: dict[str, Any]) -> dict[str, Any]:
     return cached_progress or exchange_progress(row.get("roadmap_events", []))
 
 
+def refresh_assessment_market_state(row: dict[str, Any]) -> dict[str, Any]:
+    progress = dashboard_exchange_progress(row)
+    pre_tge_progress = pre_tge_exchange_progress_from_db(row)
+    detail_row = {**row, **progress, **pre_tge_progress}
+    listing_details = exchange_listing_details(detail_row)
+    refreshed = {**row, **progress, **pre_tge_progress, "exchange_listing_details": listing_details}
+    apply_cmc_market_tge_status(refreshed)
+    return refreshed
+
+
 def dashboard_rows(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     latest: dict[str, dict[str, Any]] = {}
     for row in history:
@@ -1339,12 +1349,7 @@ def dashboard_rows(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
         latest[key] = row
     rows = []
     for row in latest.values():
-        progress = dashboard_exchange_progress(row)
-        pre_tge_progress = pre_tge_exchange_progress_from_db(row)
-        detail_row = {**row, **progress, **pre_tge_progress}
-        listing_details = exchange_listing_details(detail_row)
-        assessment = {**row, **progress, **pre_tge_progress, "exchange_listing_details": listing_details}
-        apply_cmc_market_tge_status(assessment)
+        assessment = refresh_assessment_market_state(row)
         refresh_total_score(assessment)
         rows.append(
             {
@@ -1365,9 +1370,15 @@ def dashboard_rows(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "tge_date": row.get("tge_date", ""),
                 "tge_method": row.get("tge_method", ""),
                 "roadmap_events": row.get("roadmap_events", []),
-                **progress,
-                **pre_tge_progress,
-                "exchange_listing_details": listing_details,
+                "exchange_score": assessment.get("exchange_score", 0),
+                "exchange_progress": assessment.get("exchange_progress", 0),
+                "exchange_raw_score": assessment.get("exchange_raw_score", 0),
+                "exchange_source": assessment.get("exchange_source", ""),
+                "listed_exchanges": assessment.get("listed_exchanges", []),
+                "pre_tge_exchange_score": assessment.get("pre_tge_exchange_score", 0),
+                "pre_tge_exchange_source": assessment.get("pre_tge_exchange_source", ""),
+                "pre_tge_listing_signals": assessment.get("pre_tge_listing_signals", []),
+                "exchange_listing_details": assessment.get("exchange_listing_details", []),
                 "assessment": assessment,
             }
         )
@@ -1478,9 +1489,11 @@ def find_assessment_for_request(request: dict[str, Any], history: list[dict[str,
         row_key = project_request_key(str(row.get("rootdata_url", "")), str(row.get("x_handle", "")))
         row_handle = str(row.get("x_handle", "")).strip().lstrip("@").lower()
         if request_key and request_key == row_key:
-            return apply_request_identity_override(row, request)
+            refreshed = refresh_assessment_market_state(row)
+            return apply_request_identity_override(refreshed, request)
         if request_handle and request_handle == row_handle:
-            return apply_request_identity_override(row, request)
+            refreshed = refresh_assessment_market_state(row)
+            return apply_request_identity_override(refreshed, request)
     return None
 
 
