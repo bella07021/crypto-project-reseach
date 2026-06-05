@@ -33,6 +33,13 @@ _MONTH_TIME_RE = re.compile(
     r"(?P<hour>\d{1,2}):(?P<minute>\d{2})\s*(?P<ampm>AM|PM)?\s*UTC\b",
     re.IGNORECASE,
 )
+_TIME_ON_MONTH_RE = re.compile(
+    r"\b(?P<hour>\d{1,2}):(?P<minute>\d{2})\s*(?P<ampm>AM|PM)?\s+on\s+"
+    r"(?P<month>Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|"
+    r"Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+"
+    r"(?P<day>\d{1,2}),\s*(?P<year>\d{4})\s*(?:\(\s*)?UTC(?:\s*\))?",
+    re.IGNORECASE,
+)
 _SIMPLE_LISTING_SYMBOL_RE = re.compile(
     r"\b(?i:will list|to list|listing of|will launch)\s+([A-Z][A-Z0-9]{1,11})(?:/[A-Z]{2,6})?\b",
 )
@@ -196,6 +203,8 @@ def _extract_time_by_context(text: str, context_predicate) -> str | None:
         matches.append((match.start(), _format_utc_match(match)))
     for match in _MONTH_TIME_RE.finditer(text):
         matches.append((match.start(), _format_month_time_match(match)))
+    for match in _TIME_ON_MONTH_RE.finditer(text):
+        matches.append((match.start(), _format_month_time_match(match)))
     for timestamp_start, timestamp in sorted(matches):
         context = _time_context_before(text, timestamp_start)
         if context_predicate(context):
@@ -225,6 +234,7 @@ def _looks_like_trading_time_context(context: str) -> bool:
             "spot trading",
             "start trading",
             "listing:",
+            "trading:",
         ),
     )
     non_trading_pos = _last_phrase_position(

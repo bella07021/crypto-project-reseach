@@ -371,6 +371,27 @@ class ExchangeListingParserTests(unittest.TestCase):
         self.assertEqual(1, len(events))
         self.assertEqual("QAIT", events[0]["token_symbol"])
 
+    def test_kucoin_trading_line_is_used_as_trading_start_time(self):
+        raw_source = {
+            "exchange": "kucoin",
+            "source_type": "exchange_announcement",
+            "source_url": "https://www.kucoin.com/announcement/en-world-premiere-qait-qait-listed-on-kucoin",
+            "title": "World Premiere: QAIT (QAIT) Listed on KuCoin",
+            "raw_text": (
+                "World Premiere: QAIT (QAIT) Listed on KuCoin\n"
+                "Trading: 13:00 on May 28, 2026 (UTC)\n"
+                "05/27/2026, 19:06:00"
+            ),
+            "published_at": "2026-05-27T19:06:00Z",
+        }
+
+        events = parse_events(raw_source, now=self.fixed_now)
+
+        self.assertEqual(1, len(events))
+        self.assertEqual("QAIT", events[0]["token_symbol"])
+        self.assertEqual("2026-05-28T13:00:00Z", events[0]["trading_start_time"])
+        self.assertEqual(STATUS_TRADING_STARTED, events[0]["status"])
+
     def test_will_launch_spot_pair_language_extracts_base_symbol(self):
         raw_source = {
             "exchange": "okx",
