@@ -174,6 +174,8 @@ def score_payload(data: dict[str, Any]) -> dict[str, Any]:
         apply_icodrops_tge_signal_from_web(assessment)
     prune_foreign_project_tge_links(assessment)
     apply_tge_exchange_gate(assessment)
+    if not payload.no_live:
+        apply_cmc_market_tge_status(assessment)
     assessment["exchange_listing_details"] = exchange_listing_details(assessment)
     if github_storage_config():
         history = append_github_history(assessment)
@@ -1212,6 +1214,40 @@ def apply_tge_exchange_gate(assessment: dict[str, Any]) -> dict[str, Any]:
     return assessment
 
 
+def is_cmc_exchange_source(source: Any) -> bool:
+    lowered = str(source or "").lower()
+    return "coinmarketcap" in lowered or lowered == "cmc"
+
+
+def apply_cmc_market_tge_status(assessment: dict[str, Any]) -> dict[str, Any]:
+    has_cmc_markets = is_cmc_exchange_source(assessment.get("exchange_source")) and assessment_has_listed_exchange(assessment)
+    if has_cmc_markets:
+        assessment["tge_status"] = "已 TGE"
+        assessment["tge_probability"] = 100
+        assessment["tge_method"] = assessment.get("tge_method") or "CoinMarketCap Markets"
+        notes = assessment.setdefault("evidence_notes", [])
+        note = f"CMC markets detected listed exchanges: {', '.join(assessment.get('listed_exchanges', []))}"
+        if note not in notes:
+            notes.append(note)
+        return assessment
+
+    if (
+        assessment.get("tge_status") == "已 TGE"
+        or assessment.get("tge_probability")
+        or assessment.get("tge_date")
+        or assessment.get("tge_method")
+        or assessment.get("tge_evidence")
+        or assessment.get("tge_evidence_links")
+    ):
+        assessment["tge_status"] = "未 TGE"
+        assessment["tge_probability"] = 0
+        assessment["tge_date"] = ""
+        assessment["tge_method"] = ""
+        assessment["tge_evidence"] = []
+        assessment["tge_evidence_links"] = []
+    return assessment
+
+
 def is_foreign_project_x_status(url: str, x_handle: str) -> bool:
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower().removeprefix("www.")
@@ -1262,7 +1298,8 @@ def hydrate_cached_assessment(row: dict[str, Any]) -> dict[str, Any]:
             for link in links:
                 if str(link.get("text", "")) == "Binance Alpha Airdrop":
                     link["text"] = f"Binance Alpha Airdrop active from {datetime.fromisoformat(hydrated['tge_date']).strftime('%B %-d, %Y')}"
-    return apply_tge_exchange_gate(hydrated)
+    apply_tge_exchange_gate(hydrated)
+    return apply_cmc_market_tge_status(hydrated)
 
 
 def cached_exchange_progress(row: dict[str, Any]) -> dict[str, Any] | None:
@@ -1307,6 +1344,7 @@ def dashboard_rows(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
         detail_row = {**row, **progress, **pre_tge_progress}
         listing_details = exchange_listing_details(detail_row)
         assessment = {**row, **progress, **pre_tge_progress, "exchange_listing_details": listing_details}
+        apply_cmc_market_tge_status(assessment)
         refresh_total_score(assessment)
         rows.append(
             {

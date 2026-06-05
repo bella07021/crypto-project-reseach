@@ -281,6 +281,97 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(rows[0]["exchange_source"], "CoinMarketCap Data API")
         self.assertEqual(rows[0]["listed_exchanges"], ["Coinbase", "Bithumb 韩元现货", "Kraken", "BN 合约"])
 
+    def test_dashboard_rows_marks_cmc_listed_project_as_tge(self):
+        with patch(
+            "web_app.project_exchange_progress",
+            return_value={
+                "exchange_score": 55.0,
+                "exchange_progress": 55.0,
+                "exchange_raw_score": 55.0,
+                "pre_tge_exchange_score": 55.0,
+                "exchange_source": "CoinMarketCap Web",
+                "listed_exchanges": ["Gate", "KuCoin", "MEXC"],
+            },
+        ), patch(
+            "web_app.pre_tge_exchange_progress_from_db",
+            return_value={
+                "pre_tge_exchange_score": 40.0,
+                "pre_tge_exchange_source": "exchange_listings_db",
+                "pre_tge_listing_signals": [],
+            },
+        ):
+            rows = dashboard_rows(
+                [
+                    {
+                        "assessed_at": "2026-06-05T01:00:00Z",
+                        "token_ticker": "QAIT",
+                        "project_name": "QAIT",
+                        "rootdata_url": "https://www.rootdata.com/Projects/detail/QAIT?k=1",
+                        "tge_status": "未 TGE",
+                        "tge_probability": 0,
+                        "exchange_score": 40.0,
+                        "exchange_source": "CoinMarketCap Web",
+                        "listed_exchanges": ["MEXC", "Gate", "KuCoin"],
+                    }
+                ]
+            )
+
+        self.assertEqual(rows[0]["tge_status"], "已 TGE")
+        self.assertEqual(rows[0]["tge_probability"], 100)
+        self.assertEqual(rows[0]["tge_method"], "CoinMarketCap Markets")
+
+    def test_dashboard_rows_does_not_trust_rootdata_tge_without_cmc_market(self):
+        with patch(
+            "web_app.pre_tge_exchange_progress_from_db",
+            return_value={
+                "pre_tge_exchange_score": 40.0,
+                "pre_tge_exchange_source": "exchange_listings_db",
+                "pre_tge_listing_signals": [],
+            },
+        ):
+            rows = dashboard_rows(
+                [
+                    {
+                        "assessed_at": "2026-06-05T01:00:00Z",
+                        "token_ticker": "QAIT",
+                        "project_name": "QAIT",
+                        "rootdata_url": "https://www.rootdata.com/Projects/detail/QAIT?k=1",
+                        "tge_status": "已 TGE",
+                        "tge_probability": 100,
+                        "tge_date": "2026-06-05",
+                        "tge_method": "RootData Roadmap",
+                        "exchange_score": 40.0,
+                        "exchange_source": "RootData",
+                        "listed_exchanges": ["Gate", "KuCoin", "MEXC"],
+                    }
+                ]
+            )
+
+        self.assertEqual(rows[0]["tge_status"], "未 TGE")
+        self.assertEqual(rows[0]["tge_probability"], 0)
+        self.assertEqual(rows[0]["tge_date"], "")
+        self.assertEqual(rows[0]["tge_method"], "")
+
+    def test_dashboard_rows_does_not_trust_cached_tge_without_exchange_source(self):
+        rows = dashboard_rows(
+            [
+                {
+                    "assessed_at": "2026-06-05T01:00:00Z",
+                    "token_ticker": "QAIT",
+                    "project_name": "QAIT",
+                    "rootdata_url": "https://www.rootdata.com/Projects/detail/QAIT?k=1",
+                    "tge_status": "已 TGE",
+                    "tge_probability": 100,
+                    "tge_date": "2026-06-05",
+                    "tge_method": "RootData Roadmap",
+                }
+            ]
+        )
+
+        self.assertEqual(rows[0]["tge_status"], "未 TGE")
+        self.assertEqual(rows[0]["tge_probability"], 0)
+        self.assertEqual(rows[0]["tge_date"], "")
+
     def test_dashboard_rows_recomputes_listing_details_with_database_signals(self):
         with patch(
             "web_app.project_exchange_progress",
@@ -893,7 +984,7 @@ class WebAppTests(unittest.TestCase):
 
         self.assertEqual(assessment["tge_date"], "2026-05-25")
 
-    def test_dashboard_rows_backfills_known_icodrops_airdrop_date(self):
+    def test_dashboard_rows_does_not_treat_icodrops_airdrop_as_tge_without_cmc_market(self):
         rows = dashboard_rows(
             [
                 {
@@ -912,8 +1003,10 @@ class WebAppTests(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(rows[0]["tge_date"], "2026-05-25")
-        self.assertEqual(rows[0]["assessment"]["tge_date"], "2026-05-25")
+        self.assertEqual(rows[0]["tge_status"], "未 TGE")
+        self.assertEqual(rows[0]["tge_date"], "")
+        self.assertEqual(rows[0]["assessment"]["tge_status"], "未 TGE")
+        self.assertEqual(rows[0]["assessment"]["tge_date"], "")
 
     def test_dashboard_rows_downgrades_tge_without_exchange_and_prunes_foreign_x_links(self):
         rows = dashboard_rows(
@@ -937,12 +1030,9 @@ class WebAppTests(unittest.TestCase):
         )
 
         self.assertEqual(rows[0]["tge_status"], "未 TGE")
-        self.assertEqual(rows[0]["tge_probability"], 95)
+        self.assertEqual(rows[0]["tge_probability"], 0)
         self.assertEqual(rows[0]["assessment"]["tge_status"], "未 TGE")
-        self.assertEqual(
-            rows[0]["assessment"]["tge_evidence_links"],
-            [{"text": "Binance Alpha Airdrop", "url": "https://icodrops.com/citrea/"}],
-        )
+        self.assertEqual(rows[0]["assessment"]["tge_evidence_links"], [])
 
     def test_github_history_append_creates_contents_payload(self):
         captured = {}
