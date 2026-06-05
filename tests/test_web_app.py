@@ -18,6 +18,7 @@ from web_app import (
     exchange_listing_details,
     exchange_progress_from_cmc,
     fetch_cmc_data_api_market_pairs,
+    fetch_cmc_web_market_pairs,
     pre_tge_exchange_progress_from_db,
     pre_tge_exchange_quality_score,
     apply_icodrops_tge_signal,
@@ -319,6 +320,44 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(rows[0]["tge_status"], "已 TGE")
         self.assertEqual(rows[0]["tge_probability"], 100)
         self.assertEqual(rows[0]["tge_method"], "CoinMarketCap Markets")
+
+    def test_dashboard_rows_refreshes_rootdata_cached_project_from_cmc_for_tge(self):
+        with patch(
+            "web_app.project_exchange_progress",
+            return_value={
+                "exchange_score": 55.0,
+                "exchange_progress": 55.0,
+                "exchange_raw_score": 55.0,
+                "pre_tge_exchange_score": 55.0,
+                "exchange_source": "CoinMarketCap Web",
+                "listed_exchanges": ["Gate", "KuCoin", "MEXC"],
+            },
+        ), patch(
+            "web_app.pre_tge_exchange_progress_from_db",
+            return_value={
+                "pre_tge_exchange_score": 40.0,
+                "pre_tge_exchange_source": "exchange_listings_db",
+                "pre_tge_listing_signals": [],
+            },
+        ):
+            rows = dashboard_rows(
+                [
+                    {
+                        "assessed_at": "2026-06-05T01:00:00Z",
+                        "token_ticker": "QAIT",
+                        "project_name": "SEALCOIN",
+                        "rootdata_url": "https://www.rootdata.com/Projects/detail/SEALCOIN?k=1",
+                        "tge_status": "未 TGE",
+                        "exchange_score": 10.0,
+                        "exchange_source": "RootData",
+                        "listed_exchanges": [],
+                    }
+                ]
+            )
+
+        self.assertEqual(rows[0]["exchange_source"], "CoinMarketCap Web")
+        self.assertEqual(rows[0]["listed_exchanges"], ["Gate", "KuCoin", "MEXC"])
+        self.assertEqual(rows[0]["tge_status"], "已 TGE")
 
     def test_dashboard_rows_does_not_trust_rootdata_tge_without_cmc_market(self):
         with patch(
@@ -852,6 +891,29 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(pairs[0]["exchange"], {"name": "Bithumb", "slug": "bithumb"})
         self.assertEqual(pairs[-1]["market_pair"], "BILL/USDT")
         self.assertEqual(pairs[-1]["category"], "perpetual")
+
+    def test_cmc_web_market_pairs_tries_token_slug_when_project_name_differs(self):
+        captured_slugs = []
+
+        def fake_fetch(slug, token_ticker):
+            captured_slugs.append(slug)
+            if slug == "qait":
+                return [
+                    {
+                        "exchange": {"name": "Gate", "slug": "gate"},
+                        "market_pair": "QAIT/USDT",
+                        "category": "spot",
+                        "source": "CoinMarketCap Data API",
+                    }
+                ]
+            return []
+
+        with patch("web_app.fetch_cmc_data_api_market_pairs", side_effect=fake_fetch), patch("web_app.subprocess.run") as run:
+            pairs = fetch_cmc_web_market_pairs("SEALCOIN", "QAIT")
+
+        self.assertIn("qait", captured_slugs)
+        self.assertEqual(pairs[0]["market_pair"], "QAIT/USDT")
+        self.assertGreaterEqual(run.call_count, 1)
 
     def test_project_exchange_progress_does_not_filter_cmc_by_project_name_when_ticker_missing(self):
         captured = {}

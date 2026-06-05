@@ -623,16 +623,18 @@ def fetch_cmc_data_api_market_pairs(slug: str, token_ticker: str) -> list[dict[s
 def fetch_cmc_web_market_pairs(project_name: str, token_ticker: str) -> list[dict[str, Any]]:
     slug = slugify_project_name(project_name)
     symbol = token_ticker.upper().strip()
-    if not slug:
+    token_slug = slugify_project_name(token_ticker)
+    if not slug and not token_slug:
         return []
 
-    cache_key = f"web:{slug}:{symbol}"
+    cache_key = f"web:{slug or token_slug}:{symbol}"
     if cache_key in CMC_MARKET_CACHE:
         return CMC_MARKET_CACHE[cache_key]
 
     script = ROOT / "cmc_market_scrape.js"
     pairs: list[dict[str, Any]] = []
-    for candidate_slug in [slug, f"{slug}-labs"]:
+    candidate_slugs = list(dict.fromkeys([slug, f"{slug}-labs" if slug else "", token_slug]))
+    for candidate_slug in [candidate for candidate in candidate_slugs if candidate]:
         candidate_pairs = fetch_cmc_data_api_market_pairs(candidate_slug, symbol)
         if symbol:
             candidate_pairs = [
@@ -1315,16 +1317,14 @@ def cached_exchange_progress(row: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def should_refresh_cached_cmc_progress(row: dict[str, Any]) -> bool:
-    source = str(row.get("exchange_source", "")).lower()
-    has_cmc_source = "coinmarketcap" in source or source == "cmc"
+def should_refresh_cmc_progress(row: dict[str, Any]) -> bool:
     has_identity = bool(str(row.get("project_name") or "").strip() or str(row.get("token_ticker") or "").strip())
-    return has_cmc_source and has_identity
+    return has_identity
 
 
 def dashboard_exchange_progress(row: dict[str, Any]) -> dict[str, Any]:
     cached_progress = cached_exchange_progress(row)
-    if should_refresh_cached_cmc_progress(row):
+    if should_refresh_cmc_progress(row):
         refreshed_progress = project_exchange_progress(row)
         if refreshed_progress.get("listed_exchanges"):
             return refreshed_progress
