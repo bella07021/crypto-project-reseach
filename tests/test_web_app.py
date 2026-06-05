@@ -280,6 +280,56 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(rows[0]["exchange_source"], "CoinMarketCap Data API")
         self.assertEqual(rows[0]["listed_exchanges"], ["Coinbase", "Bithumb 韩元现货", "Kraken", "BN 合约"])
 
+    def test_dashboard_rows_recomputes_listing_details_with_database_signals(self):
+        with patch(
+            "web_app.project_exchange_progress",
+            return_value={
+                "exchange_score": 95.0,
+                "exchange_progress": 95.0,
+                "exchange_raw_score": 95.0,
+                "pre_tge_exchange_score": 95.0,
+                "exchange_source": "CoinMarketCap Data API",
+                "listed_exchanges": ["Coinbase", "BN 合约"],
+            },
+        ), patch(
+            "web_app.pre_tge_exchange_progress_from_db",
+            return_value={
+                "pre_tge_exchange_score": 95.0,
+                "pre_tge_exchange_source": "exchange_listings_db",
+                "pre_tge_listing_signals": [
+                    {
+                        "exchange": "BN 合约",
+                        "listing_type": "perpetual",
+                        "event_family": "futures_listing",
+                        "trading_start_time": "2026-05-07T08:15:00Z",
+                    }
+                ],
+            },
+        ):
+            rows = dashboard_rows(
+                [
+                    {
+                        "assessed_at": "2026-06-03T01:00:00Z",
+                        "token_ticker": "BILL",
+                        "project_name": "Billions Network",
+                        "rootdata_url": "https://www.rootdata.com/Projects/detail/Billions-Network?k=1",
+                        "tge_date": "2026-05-04",
+                        "exchange_score": 95.0,
+                        "exchange_source": "CoinMarketCap Web",
+                        "listed_exchanges": ["Coinbase", "BN 合约"],
+                        "exchange_listing_details": [
+                            {"exchange": "Coinbase", "listed_at": "2026-05-04", "days_after_tge": 0},
+                            {"exchange": "BN 合约", "listed_at": "", "days_after_tge": None},
+                        ],
+                    }
+                ]
+            )
+
+        self.assertIn(
+            {"exchange": "BN 合约", "listed_at": "2026-05-07", "days_after_tge": 3},
+            rows[0]["exchange_listing_details"],
+        )
+
     def test_exchange_progress_uses_quality_tiers_and_ignores_alpha(self):
         progress = exchange_progress(
             [

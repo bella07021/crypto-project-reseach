@@ -1276,8 +1276,8 @@ def dashboard_rows(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for row in latest.values():
         progress = dashboard_exchange_progress(row)
         pre_tge_progress = pre_tge_exchange_progress_from_db(row)
-        detail_row = {**row, **progress}
-        listing_details = progress.get("exchange_listing_details") or exchange_listing_details(detail_row)
+        detail_row = {**row, **progress, **pre_tge_progress}
+        listing_details = exchange_listing_details(detail_row)
         assessment = {**row, **progress, **pre_tge_progress, "exchange_listing_details": listing_details}
         refresh_total_score(assessment)
         rows.append(
