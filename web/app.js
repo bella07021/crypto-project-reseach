@@ -44,6 +44,20 @@ function exchangeDisplayName(exchange) {
   return name;
 }
 
+function uniqueTextValues(values) {
+  const seen = new Set();
+  const items = [];
+  for (const value of values) {
+    const text = String(value || "").trim();
+    if (!text || text === "--") continue;
+    const key = text.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    items.push(text);
+  }
+  return items;
+}
+
 function isPriorityExchange(exchange) {
   return ["BN 合约", "BN 现货", "Upbit 韩元现货"].includes(String(exchange || ""));
 }
@@ -183,9 +197,8 @@ function scoreReason(kind, assessment) {
   if (kind === "exchange") {
     const signals = assessment.pre_tge_listing_signals || [];
     if (!signals.length) return "暂无 exchange listings 预上线信号";
-    return signals
-      .map((item) => exchangeDisplayName(item.exchange) || "--")
-      .join("、");
+    const exchanges = uniqueTextValues(signals.map((item) => exchangeDisplayName(item.exchange)));
+    return exchanges.length ? exchanges.join("、") : "暂无 exchange listings 预上线信号";
   }
   const percentile = Number(assessment.social_score || 0);
   const topRank = percentile > 0 ? Math.max(0.01, 100 - percentile) : 100;
@@ -395,9 +408,20 @@ function renderReport(assessment, workbook) {
   get("tgeDate").textContent = assessment.tge_status === "已 TGE"
     ? `TGE 日期: ${assessment.tge_date || "待确认"}`
     : "未 TGE";
-  const tgeMethod = visibleTgeMethod(assessment);
-  get("tgeMethod").textContent = tgeMethod ? `方式: ${tgeMethod}` : "方式: --";
-  renderTgeEvidence(get("tgeEvidenceList"), assessment);
+  const tgeMethodEl = get("tgeMethod");
+  const tgeEvidenceList = get("tgeEvidenceList");
+  if (assessment.tge_status === "已 TGE") {
+    tgeMethodEl.hidden = true;
+    tgeMethodEl.textContent = "";
+    tgeEvidenceList.hidden = true;
+    tgeEvidenceList.innerHTML = "";
+  } else {
+    const tgeMethod = visibleTgeMethod(assessment);
+    tgeMethodEl.hidden = false;
+    tgeMethodEl.textContent = tgeMethod ? `方式: ${tgeMethod}` : "方式: --";
+    tgeEvidenceList.hidden = false;
+    renderTgeEvidence(tgeEvidenceList, assessment);
+  }
   renderRoadmap(get("roadmapList"), assessment);
   reportMount.innerHTML = "";
   reportMount.appendChild(fragment);

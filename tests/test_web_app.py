@@ -19,6 +19,7 @@ from web_app import (
     exchange_progress_from_cmc,
     fetch_cmc_data_api_market_pairs,
     pre_tge_exchange_progress_from_db,
+    pre_tge_exchange_quality_score,
     apply_icodrops_tge_signal,
     project_exchange_progress,
     apply_cmc_chain_override,
@@ -637,6 +638,10 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(progress["exchange_raw_score"], 40.0)
         self.assertEqual(progress["exchange_score"], 40.0)
         self.assertEqual(progress["listed_exchanges"], ["Bitget", "Gate", "MEXC"])
+
+    def test_pre_tge_exchange_quality_score_counts_unique_ordinary_exchanges(self):
+        self.assertEqual(pre_tge_exchange_quality_score(["Bitget", "Bitget"]), 55.0)
+        self.assertEqual(pre_tge_exchange_quality_score(["Bitget", "MEXC", "MEXC"]), 50.0)
 
     def test_apply_cmc_chain_override_uses_token_platforms_over_rootdata_text(self):
         with patch(

@@ -511,7 +511,8 @@ def pre_tge_exchange_quality_score(labels: list[str]) -> float:
     if "BN 合约" in label_set:
         return 75.0
 
-    ordinary_count = len([label for label in labels if label in set(MAINSTREAM_SPOT_EXCHANGES.values())])
+    ordinary_exchanges = set(MAINSTREAM_SPOT_EXCHANGES.values())
+    ordinary_count = len([label for label in label_set if label in ordinary_exchanges])
     if ordinary_count >= 5:
         return 30.0
     if ordinary_count >= 3:
