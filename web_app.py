@@ -832,9 +832,26 @@ def exchange_label_from_listing_event(exchange: str, listing_type: str, event_fa
     return exchange_label_from_db_key(exchange)
 
 
+def listing_event_reference_date(announcement_published_at: Any, trading_start_time: Any) -> str:
+    for value in (announcement_published_at, trading_start_time):
+        text = str(value or "").strip()
+        if text:
+            return text.split("T", 1)[0]
+    return ""
+
+
+def is_pre_tge_listing_event(announcement_published_at: Any, trading_start_time: Any, tge_date: Any) -> bool:
+    tge_day = str(tge_date or "").strip().split("T", 1)[0]
+    if not tge_day:
+        return True
+    event_day = listing_event_reference_date(announcement_published_at, trading_start_time)
+    return bool(event_day and event_day <= tge_day)
+
+
 def pre_tge_exchange_progress_from_db(row: dict[str, Any], db_path: Path | str = EXCHANGE_LISTINGS_DB_PATH) -> dict[str, Any]:
     token_symbol = str(row.get("token_ticker") or row.get("token_symbol") or "").strip().upper()
     project_name = str(row.get("project_name") or "").strip()
+    tge_date = row.get("tge_date")
     if not token_symbol and not project_name:
         return {
             "pre_tge_exchange_score": 10.0,
@@ -887,6 +904,8 @@ def pre_tge_exchange_progress_from_db(row: dict[str, Any], db_path: Path | str =
     seen: set[tuple[str, str, str]] = set()
     for event in events:
         exchange, event_project_name, event_symbol, listing_type, event_family, event_kind, status, url, title, published_at, trading_start_time, source_type, precedence, updated_at = event
+        if not is_pre_tge_listing_event(published_at, trading_start_time, tge_date):
+            continue
         label = exchange_label_from_listing_event(str(exchange or ""), str(listing_type or ""), str(event_family or ""))
         key = (label, str(event_symbol or ""), str(status or ""))
         if key in seen:

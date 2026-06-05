@@ -542,6 +542,66 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(progress["pre_tge_listing_signals"][0]["listing_type"], "perpetual")
         self.assertEqual(progress["pre_tge_listing_signals"][0]["trading_start_time"], "2026-05-05T10:00:00Z")
 
+    def test_pre_tge_exchange_progress_excludes_post_tge_listing_database_events(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "exchange_listings.sqlite"
+            exchange_listing_db.init_db(db_path)
+            with exchange_listing_db.connect(db_path) as conn:
+                asset_id = exchange_listing_db.upsert_normalized_asset(
+                    conn,
+                    {
+                        "symbol": "BILL",
+                        "project_name": "Billions Network",
+                        "identity_confidence": "high",
+                    },
+                )
+                exchange_listing_db.upsert_listing_event(
+                    conn,
+                    {
+                        "exchange": "binance",
+                        "normalized_asset_id": asset_id,
+                        "project_name": "Billions Network",
+                        "token_symbol": "BILL",
+                        "listing_type": "perpetual",
+                        "event_family": "futures_listing",
+                        "event_kind": "futures_listing",
+                        "status": "trading_started",
+                        "announcement_url": "https://www.binance.com/en/support/announcement/1",
+                        "announcement_title": "Binance Futures Will Launch BILLUSDT Perpetual Contract",
+                        "announcement_published_at": "",
+                        "trading_start_time": "2026-05-07T08:15:00Z",
+                        "source_type": "exchange_announcement",
+                        "source_precedence": 30,
+                    },
+                )
+                exchange_listing_db.upsert_listing_event(
+                    conn,
+                    {
+                        "exchange": "bybit",
+                        "normalized_asset_id": asset_id,
+                        "project_name": "Billions Network",
+                        "token_symbol": "BILL",
+                        "listing_type": "spot",
+                        "event_family": "spot_listing",
+                        "event_kind": "listing_announcement",
+                        "status": "trading_started",
+                        "announcement_url": "https://announcements.bybit.com/article/1",
+                        "announcement_title": "Bybit to List Billions Network (BILL) on Spot",
+                        "announcement_published_at": "2026-05-15T07:56:44Z",
+                        "trading_start_time": "2026-05-04T08:00:00Z",
+                        "source_type": "exchange_announcement",
+                        "source_precedence": 30,
+                    },
+                )
+
+            progress = pre_tge_exchange_progress_from_db(
+                {"token_ticker": "BILL", "project_name": "Billions Network", "tge_date": "2026-05-04"},
+                db_path,
+            )
+
+        self.assertEqual(progress["pre_tge_exchange_score"], 10.0)
+        self.assertEqual(progress["pre_tge_listing_signals"], [])
+
     def test_mainstream_spot_exchange_tier_scores_once(self):
         progress = exchange_progress_from_cmc(
             [
