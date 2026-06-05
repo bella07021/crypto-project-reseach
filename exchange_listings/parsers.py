@@ -214,9 +214,9 @@ def _time_context_before(text: str, timestamp_start: int) -> str:
 
 def _looks_like_trading_time_context(context: str) -> bool:
     lowered = context.lower()
-    return any(
-        phrase in lowered
-        for phrase in (
+    trading_pos = _last_phrase_position(
+        lowered,
+        (
             "open trading",
             "trading opens",
             "trading will open",
@@ -224,9 +224,19 @@ def _looks_like_trading_time_context(context: str) -> bool:
             "trading will start",
             "spot trading",
             "start trading",
-            "listing",
-        )
+            "listing:",
+        ),
     )
+    non_trading_pos = _last_phrase_position(
+        lowered,
+        (
+            "deposit",
+            "deposits",
+            "withdrawal",
+            "withdrawals",
+        ),
+    )
+    return trading_pos >= 0 and trading_pos > non_trading_pos
 
 
 def _looks_like_futures_trading_time_context(context: str) -> bool:
@@ -251,6 +261,10 @@ def _looks_like_deposit_time_context(context: str) -> bool:
 def _looks_like_withdrawal_time_context(context: str) -> bool:
     lowered = context.lower()
     return any(phrase in lowered for phrase in ("withdrawal", "withdrawals open", "withdrawal opens"))
+
+
+def _last_phrase_position(text: str, phrases: tuple[str, ...]) -> int:
+    return max((text.rfind(phrase) for phrase in phrases), default=-1)
 
 
 def _format_utc_match(match: re.Match) -> str:

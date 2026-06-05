@@ -83,7 +83,12 @@ class ExchangeListingParserTests(unittest.TestCase):
             "source_type": "exchange_announcement",
             "source_url": "https://announcements.bybit.com/article/bill",
             "title": "Bybit to List Billions Network (BILL) on Spot",
-            "raw_text": "Bybit will list Billions Network (BILL). Listing timeline BILL listing: May 4, 2026, 8:00AM UTC",
+            "raw_text": (
+                "Bybit will list Billions Network (BILL). "
+                "Listing timeline BILL deposit: Opens on May 4, 2026, 2:00AM UTC "
+                "BILL listing: May 4, 2026, 8:00AM UTC "
+                "BILL withdrawals: Opens on May 5, 2026, 10:00AM UTC"
+            ),
             "published_at": "2026-05-04T05:38:40Z",
         }
 
