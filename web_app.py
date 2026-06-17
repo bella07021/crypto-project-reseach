@@ -849,7 +849,9 @@ def is_pre_tge_listing_event(announcement_published_at: Any, trading_start_time:
     if not tge_day:
         return True
     event_day = listing_event_reference_date(announcement_published_at, trading_start_time)
-    return bool(event_day and event_day <= tge_day)
+    if not event_day:
+        return True
+    return event_day <= tge_day
 
 
 def pre_tge_exchange_progress_from_db(row: dict[str, Any], db_path: Path | str = EXCHANGE_LISTINGS_DB_PATH) -> dict[str, Any]:

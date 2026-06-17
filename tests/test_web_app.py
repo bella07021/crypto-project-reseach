@@ -847,6 +847,48 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(progress["pre_tge_listing_signals"][0]["exchange"], "Bybit")
         self.assertEqual(progress["pre_tge_listing_signals"][0]["trading_start_time"], "2026-05-04T08:00:00Z")
 
+    def test_pre_tge_exchange_progress_keeps_matched_listing_without_event_time(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "exchange_listings.sqlite"
+            exchange_listing_db.init_db(db_path)
+            with exchange_listing_db.connect(db_path) as conn:
+                asset_id = exchange_listing_db.upsert_normalized_asset(
+                    conn,
+                    {
+                        "symbol": "O",
+                        "project_name": "o1.exchange",
+                        "identity_confidence": "high",
+                    },
+                )
+                exchange_listing_db.upsert_listing_event(
+                    conn,
+                    {
+                        "exchange": "bitget",
+                        "normalized_asset_id": asset_id,
+                        "project_name": "",
+                        "token_symbol": "O",
+                        "listing_type": "spot",
+                        "event_family": "spot_listing",
+                        "event_kind": "listing_announcement",
+                        "status": "announced",
+                        "announcement_url": "https://www.bitget.com/zh-CN/support/articles/12560603885931",
+                        "announcement_title": "【首发上币】o1.exchange（O）将上线 DeFi 区",
+                        "announcement_published_at": "",
+                        "trading_start_time": "",
+                        "source_type": "exchange_announcement",
+                        "source_precedence": 30,
+                    },
+                )
+
+            progress = pre_tge_exchange_progress_from_db(
+                {"token_ticker": "O", "project_name": "o1.exchange", "tge_date": "2026-06-17"},
+                db_path,
+            )
+
+        self.assertEqual(progress["pre_tge_exchange_score"], 55.0)
+        self.assertEqual(1, len(progress["pre_tge_listing_signals"]))
+        self.assertEqual(progress["pre_tge_listing_signals"][0]["exchange"], "Bitget")
+
     def test_exchange_listing_details_use_full_listing_signals_for_post_tge_times(self):
         details = exchange_listing_details(
             {
