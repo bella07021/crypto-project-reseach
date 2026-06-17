@@ -23,6 +23,7 @@ from live_project_fetcher import (
     LiveProjectDetail,
     enrich_team_members_from_linkedin,
     fetch_live_project_detail,
+    fetch_x_followers,
     fetch_x_signal_htmls,
     fetch_x_signal_htmls_with_browser,
     fetch_text_with_vercel_browser,
@@ -243,6 +244,47 @@ class ProjectScorerTests(unittest.TestCase):
 
         self.assertEqual(htmls, ["rendered status"])
         self.assertIn("x_signal_scrape.js", run.call_args.args[0])
+
+    def test_fetch_x_followers_parses_current_profile_followers_html(self):
+        html = """
+        <a href="/o1_exchange/verified_followers">
+          <div class="font-chirp text-subtext1 font-bold">41.1K</div>
+          <div class="font-chirp text-gray-700">Followers</div>
+        </a>
+        """
+
+        def fake_fetch(url, **kwargs):
+            if "syndication.twimg.com" in url:
+                return ""
+            return html
+
+        with patch("live_project_fetcher.fetch_text", side_effect=fake_fetch):
+            followers, source = fetch_x_followers("o1_exchange")
+
+        self.assertEqual(followers, 41100)
+        self.assertEqual(source, "x_html")
+
+    def test_fetch_x_followers_uses_curl_when_profile_urlopen_fails(self):
+        html = """
+        <a href="/o1_exchange/verified_followers">
+          <div class="font-chirp text-subtext1 font-bold">41.1K</div>
+          <div class="font-chirp text-gray-700">Followers</div>
+        </a>
+        """
+
+        def fake_fetch(url, **kwargs):
+            if "syndication.twimg.com" in url:
+                return ""
+            raise RuntimeError("dns failed")
+
+        with patch("live_project_fetcher.fetch_text", side_effect=fake_fetch), patch(
+            "live_project_fetcher.fetch_text_with_curl",
+            return_value=html,
+        ):
+            followers, source = fetch_x_followers("o1_exchange")
+
+        self.assertEqual(followers, 41100)
+        self.assertEqual(source, "x_html")
 
     def test_parse_rootdata_detail_html_ignores_other_project_twitter_signal_links(self):
         html = """

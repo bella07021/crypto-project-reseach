@@ -929,10 +929,24 @@ def fetch_x_followers(handle: str) -> tuple[Optional[int], str]:
         try:
             html = fetch_text(url, retries=1, timeout=12)
         except Exception:
-            continue
+            try:
+                html = fetch_text_with_curl(url, timeout=12)
+            except Exception:
+                continue
         match = re.search(r'"followers_count"\s*:\s*(\d+)', html)
         if match:
             return int(match.group(1)), "x_html"
+        follower_block = re.search(
+            rf'href=["\']/{re.escape(normalized)}/(?:verified_)?followers["\'][^>]*>.*?'
+            r'>\s*([\d,.]+)\s*([KMB])?\s*<.*?>\s*Followers\s*<',
+            html,
+            re.I | re.S,
+        )
+        if follower_block:
+            value = float(follower_block.group(1).replace(",", ""))
+            suffix = (follower_block.group(2) or "").upper()
+            multiplier = {"K": 1_000, "M": 1_000_000, "B": 1_000_000_000}.get(suffix, 1)
+            return int(value * multiplier), "x_html"
     return None, "not_found"
 
 
