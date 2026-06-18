@@ -27,6 +27,8 @@ from web_app import (
     parse_score_payload,
     score_payload,
     handle_post_api,
+    exchange_listings_db_path,
+    exchange_listings_db_status,
     ROOT,
 )
 
@@ -1230,6 +1232,142 @@ class WebAppTests(unittest.TestCase):
         decoded = __import__("base64").b64decode(captured["payload"]["content"]).decode("utf-8")
         self.assertIn('"token_ticker": "DEMO"', decoded)
         self.assertIn("/repos/bella07021/crypto-project-reseach/contents/data/project_scores.jsonl", captured["url"])
+
+    def test_exchange_listings_db_path_downloads_github_database_to_runtime_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            source_db = tmp_path / "source.sqlite"
+            runtime_db = tmp_path / "runtime.sqlite"
+            exchange_listing_db.init_db(source_db)
+            source_bytes = source_db.read_bytes()
+
+            class FakeResponse:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, exc_type, exc, traceback):
+                    return False
+
+                def read(self):
+                    return json.dumps(
+                        {
+                            "content": __import__("base64").b64encode(source_bytes).decode("ascii"),
+                            "sha": "db-sha",
+                        }
+                    ).encode("utf-8")
+
+            def fake_urlopen(request, timeout=0, context=None):
+                return FakeResponse()
+
+            with patch.dict(
+                os.environ,
+                {
+                    "GITHUB_TOKEN": "token",
+                    "GITHUB_REPO_OWNER": "bella07021",
+                    "GITHUB_REPO_NAME": "crypto-project-reseach",
+                    "GITHUB_BRANCH": "main",
+                    "EXCHANGE_LISTINGS_RUNTIME_DB_PATH": str(runtime_db),
+                },
+            ), patch("web_app.urlopen", fake_urlopen), patch("web_app.EXCHANGE_LISTINGS_DB_REMOTE_SHA", None):
+                resolved = exchange_listings_db_path()
+
+            self.assertEqual(resolved, runtime_db)
+            self.assertEqual(runtime_db.read_bytes(), source_bytes)
+
+    def test_exchange_listings_db_path_downloads_large_github_database_via_download_url(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            runtime_db = tmp_path / "runtime.sqlite"
+            source_bytes = b"sqlite-bytes"
+
+            class FakeResponse:
+                def __init__(self, body):
+                    self.body = body
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, exc_type, exc, traceback):
+                    return False
+
+                def read(self):
+                    return self.body
+
+            def fake_urlopen(request, timeout=0, context=None):
+                if "api.github.com" in request.full_url:
+                    return FakeResponse(json.dumps({"content": "", "download_url": "https://raw.example/db", "sha": "db-sha"}).encode("utf-8"))
+                return FakeResponse(source_bytes)
+
+            with patch.dict(
+                os.environ,
+                {
+                    "GITHUB_TOKEN": "token",
+                    "GITHUB_REPO_OWNER": "bella07021",
+                    "GITHUB_REPO_NAME": "crypto-project-reseach",
+                    "GITHUB_BRANCH": "main",
+                    "EXCHANGE_LISTINGS_RUNTIME_DB_PATH": str(runtime_db),
+                },
+            ), patch("web_app.urlopen", fake_urlopen), patch("web_app.EXCHANGE_LISTINGS_DB_REMOTE_SHA", None):
+                resolved = exchange_listings_db_path()
+
+            self.assertEqual(resolved, runtime_db)
+            self.assertEqual(runtime_db.read_bytes(), source_bytes)
+
+    def test_exchange_listing_manual_sync_uploads_runtime_database_to_github(self):
+        from web_app import run_exchange_listing_manual_sync
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "runtime.sqlite"
+            exchange_listing_db.init_db(db_path)
+            uploaded = {}
+
+            def fake_run_sync(path, **kwargs):
+                self.assertEqual(db_path, path)
+                with path.open("ab") as fh:
+                    fh.write(b"--updated")
+                return {"ok": True, "status": "success"}
+
+            def fake_write_binary(path, content, message, sha=None):
+                uploaded["path"] = path
+                uploaded["content"] = content
+                uploaded["message"] = message
+                uploaded["sha"] = sha
+
+            with patch.dict(
+                os.environ,
+                {
+                    "GITHUB_TOKEN": "token",
+                    "GITHUB_REPO_OWNER": "bella07021",
+                    "GITHUB_REPO_NAME": "crypto-project-reseach",
+                    "GITHUB_BRANCH": "main",
+                },
+            ), patch("web_app.exchange_listings_db_path", return_value=db_path), patch(
+                "web_app.run_sync", fake_run_sync
+            ), patch(
+                "web_app.read_github_binary_file", return_value=(b"old", "old-sha")
+            ), patch(
+                "web_app.write_github_binary_file", fake_write_binary
+            ):
+                result = run_exchange_listing_manual_sync({"exchanges": ["coinbase"]})
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(uploaded["path"], "data/exchange_listings.sqlite")
+        self.assertTrue(uploaded["content"].endswith(b"--updated"))
+        self.assertEqual(uploaded["sha"], "old-sha")
+        self.assertEqual(uploaded["message"], "Update exchange listing database")
+
+    def test_exchange_listings_db_status_reports_runtime_database_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "runtime.sqlite"
+            db_path.write_bytes(b"sqlite")
+
+            with patch("web_app.exchange_listings_db_path", return_value=db_path):
+                status = exchange_listings_db_status()
+
+        self.assertTrue(status["exists"])
+        self.assertEqual(status["path"], str(db_path))
+        self.assertEqual(status["size_bytes"], 6)
+        self.assertIn("updated_at", status)
 
     def test_delete_project_data_removes_local_history_and_requests(self):
         with tempfile.TemporaryDirectory() as tmp:

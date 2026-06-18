@@ -36,9 +36,11 @@ from live_project_fetcher import clean_html_text, fetch_text, normalize_rootdata
 ROOT = Path(__file__).resolve().parent
 WEB_DIR = ROOT / "web"
 EXCHANGE_LISTINGS_DB_PATH = ROOT / "data" / "exchange_listings.sqlite"
+EXCHANGE_LISTINGS_GITHUB_PATH = "data/exchange_listings.sqlite"
 GITHUB_HISTORY_PATH = "data/project_scores.jsonl"
 GITHUB_REQUESTS_PATH = "data/project_requests.jsonl"
 ACTIVE_REQUEST_STATUSES = {"pending", "processing"}
+EXCHANGE_LISTINGS_DB_REMOTE_SHA: str | None = None
 ICODROPS_CACHE: dict[str, str] = {}
 BINANCE_FUTURES_ONBOARD_DATES: dict[str, str] = {}
 BINANCE_FUTURES_ONBOARD_LOADED = False
@@ -228,6 +230,17 @@ def github_storage_label() -> str:
     return f"github://{config['owner']}/{config['repo']}/{config['path']}"
 
 
+def exchange_listings_github_path() -> str:
+    return os.environ.get("GITHUB_EXCHANGE_LISTINGS_DB_PATH", "").strip() or EXCHANGE_LISTINGS_GITHUB_PATH
+
+
+def exchange_listings_runtime_db_path() -> Path:
+    override = os.environ.get("EXCHANGE_LISTINGS_RUNTIME_DB_PATH", "").strip()
+    if override:
+        return Path(override)
+    return Path("/tmp/exchange_listings.sqlite")
+
+
 def github_contents_request(config: dict[str, str], method: str, payload: dict[str, Any] | None = None) -> Any:
     url = f"https://api.github.com/repos/{config['owner']}/{config['repo']}/contents/{config['path']}"
     if method == "GET":
@@ -248,6 +261,79 @@ def github_contents_request(config: dict[str, str], method: str, payload: dict[s
     context = ssl._create_unverified_context()
     with urlopen(request, timeout=12, context=context) as response:
         return json.loads(response.read().decode("utf-8", errors="ignore") or "{}")
+
+
+def read_github_binary_file(path: str) -> tuple[bytes, str | None]:
+    config = github_storage_config(path)
+    if not config:
+        return b"", None
+    payload = github_contents_request(config, "GET")
+    encoded = str(payload.get("content") or "")
+    if encoded:
+        content = base64.b64decode(encoded)
+    elif payload.get("download_url"):
+        request = Request(
+            str(payload["download_url"]),
+            headers={
+                "Accept": "application/octet-stream",
+                "Authorization": f"Bearer {config['token']}",
+                "User-Agent": "crypto-project-scoring",
+            },
+        )
+        context = ssl._create_unverified_context()
+        with urlopen(request, timeout=12, context=context) as response:
+            content = response.read()
+    else:
+        content = b""
+    return content, payload.get("sha")
+
+
+def write_github_binary_file(path: str, content: bytes, message: str, sha: str | None = None) -> None:
+    config = github_storage_config(path)
+    if not config:
+        return
+    payload: dict[str, Any] = {
+        "message": message,
+        "content": base64.b64encode(content).decode("ascii"),
+        "branch": config["branch"],
+    }
+    if sha:
+        payload["sha"] = sha
+    github_contents_request(config, "PUT", payload)
+
+
+def exchange_listings_db_path() -> Path:
+    global EXCHANGE_LISTINGS_DB_REMOTE_SHA
+
+    github_path = exchange_listings_github_path()
+    if not github_storage_config(github_path):
+        return EXCHANGE_LISTINGS_DB_PATH
+
+    runtime_path = exchange_listings_runtime_db_path()
+    try:
+        content, sha = read_github_binary_file(github_path)
+    except Exception:
+        return runtime_path if runtime_path.exists() else EXCHANGE_LISTINGS_DB_PATH
+
+    if content and (sha != EXCHANGE_LISTINGS_DB_REMOTE_SHA or not runtime_path.exists()):
+        runtime_path.parent.mkdir(parents=True, exist_ok=True)
+        runtime_path.write_bytes(content)
+        EXCHANGE_LISTINGS_DB_REMOTE_SHA = sha
+    return runtime_path if runtime_path.exists() else EXCHANGE_LISTINGS_DB_PATH
+
+
+def exchange_listings_db_status() -> dict[str, Any]:
+    path = exchange_listings_db_path()
+    exists = path.exists()
+    stat = path.stat() if exists else None
+    return {
+        "path": str(path),
+        "exists": exists,
+        "size_bytes": stat.st_size if stat else 0,
+        "updated_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat() if stat else "",
+        "github_path": exchange_listings_github_path(),
+        "remote_sha": EXCHANGE_LISTINGS_DB_REMOTE_SHA or "",
+    }
 
 
 def read_github_history_with_sha() -> tuple[list[dict[str, Any]], str | None]:
@@ -854,7 +940,7 @@ def is_pre_tge_listing_event(announcement_published_at: Any, trading_start_time:
     return event_day <= tge_day
 
 
-def pre_tge_exchange_progress_from_db(row: dict[str, Any], db_path: Path | str = EXCHANGE_LISTINGS_DB_PATH) -> dict[str, Any]:
+def pre_tge_exchange_progress_from_db(row: dict[str, Any], db_path: Path | str | None = None) -> dict[str, Any]:
     token_symbol = str(row.get("token_ticker") or row.get("token_symbol") or "").strip().upper()
     project_name = str(row.get("project_name") or "").strip()
     tge_date = row.get("tge_date")
@@ -866,7 +952,7 @@ def pre_tge_exchange_progress_from_db(row: dict[str, Any], db_path: Path | str =
             "exchange_listing_signals": [],
         }
 
-    path = Path(db_path)
+    path = Path(db_path) if db_path is not None else exchange_listings_db_path()
     try:
         exchange_listing_db.init_db(path)
         with exchange_listing_db.connect(path) as conn:
@@ -1547,14 +1633,28 @@ def run_exchange_listing_manual_sync(data: dict[str, Any]) -> dict[str, Any]:
     def fetcher(exchange, *, mode, months):
         return fetch_live_sources(exchange, mode=mode, months=months, limit=limit, max_pages=max_pages)
 
-    return run_sync(
-        ROOT / "data" / "exchange_listings.sqlite",
+    db_path = exchange_listings_db_path()
+    result = run_sync(
+        db_path,
         trigger_type="manual",
         mode="incremental",
         months=3,
         exchanges=data.get("exchanges"),
         fetcher=fetcher,
     )
+    github_path = exchange_listings_github_path()
+    if result.get("ok") and github_storage_config(github_path):
+        try:
+            _, sha = read_github_binary_file(github_path)
+        except Exception:
+            sha = None
+        write_github_binary_file(
+            github_path,
+            db_path.read_bytes(),
+            "Update exchange listing database",
+            sha,
+        )
+    return result
 
 
 def handle_post_api(path: str, data: dict[str, Any]) -> tuple[int, dict[str, Any]]:
@@ -1575,7 +1675,7 @@ class CryptoScoringHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path == "/api/health":
-            self.send_json({"ok": True})
+            self.send_json({"ok": True, "exchange_listings_db": exchange_listings_db_status()})
             return
         if parsed.path == "/api/history":
             self.send_json(self.read_history())
