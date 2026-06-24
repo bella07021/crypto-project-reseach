@@ -407,3 +407,24 @@ class ExchangeListingParserTests(unittest.TestCase):
         self.assertEqual(1, len(events))
         self.assertEqual("AI", events[0]["token_symbol"])
         self.assertEqual(["AI/USD"], events[0]["pairs"])
+
+    def test_okx_month_time_without_year_comma_is_parsed(self):
+        raw_source = {
+            "exchange": "okx",
+            "source_type": "exchange_announcement",
+            "source_url": "https://www.okx.com/help/okx-to-list-nes-usdt-nesa-for-spot-trading",
+            "title": "OKX to list NES/USDT (Nesa) for spot trading",
+            "raw_text": (
+                "OKX is pleased to announce the listing of NES/USDT (Nesa). "
+                "NES/USDT spot trading will open at Jun 24, 2026 13:00 UTC."
+            ),
+            "published_at": "2026-06-24T09:00:00Z",
+        }
+
+        events = parse_events(raw_source, now=datetime(2026, 6, 24, 10, tzinfo=timezone.utc))
+
+        self.assertEqual(1, len(events))
+        self.assertEqual("NES", events[0]["token_symbol"])
+        self.assertEqual(["NES/USDT"], events[0]["pairs"])
+        self.assertEqual("2026-06-24T13:00:00Z", events[0]["trading_start_time"])
+        self.assertEqual(STATUS_TRADING_SOON, events[0]["status"])

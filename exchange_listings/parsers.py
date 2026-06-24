@@ -29,7 +29,7 @@ _UTC_TIME_RE = re.compile(
 _MONTH_TIME_RE = re.compile(
     r"\b(?P<month>Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|"
     r"Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+"
-    r"(?P<day>\d{1,2}),\s*(?P<year>\d{4}),\s*"
+    r"(?P<day>\d{1,2}),\s*(?P<year>\d{4}),?\s*"
     r"(?P<hour>\d{1,2}):(?P<minute>\d{2})\s*(?P<ampm>AM|PM)?\s*UTC\b",
     re.IGNORECASE,
 )
