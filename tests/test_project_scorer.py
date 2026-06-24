@@ -97,6 +97,19 @@ class ProjectScorerTests(unittest.TestCase):
         self.assertEqual(detail.team_raw_score, 70)
         self.assertEqual(detail.team_background, "international")
 
+    def test_parse_rootdata_detail_html_does_not_scan_whole_page_for_investors(self):
+        html = """
+        <h1>Nesa</h1>
+        <a href="https://x.com/nesaorg">X</a>
+        <span>Tags</span><span>Infra</span>
+        <script>self.__next_f.push([1,"\\"name\\":\\"YZi Labs (Prev. Binance Labs) Portfolio\\""])</script>
+        """
+
+        detail = parse_rootdata_detail_html(html)
+
+        self.assertEqual(detail.project_name, "Nesa")
+        self.assertEqual(detail.investors, [])
+
     def test_parse_rootdata_detail_html_infers_international_team_from_member_names_without_location(self):
         html = """
         <h1>Solstice</h1>

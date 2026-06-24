@@ -301,6 +301,12 @@ def parse_investors_from_text(text: str) -> list[str]:
     return found
 
 
+def parse_investors_from_funding_rounds(rounds: Iterable[dict[str, object]]) -> list[str]:
+    return parse_investors_from_text(
+        " ".join(str(row.get("description") or "") for row in rounds)
+    )
+
+
 def parse_project_chains(values: list[str], text: str) -> list[str]:
     haystack = " ".join(values + [text])
     normalized = re.sub(r"\\+", "", haystack).lower()
@@ -820,7 +826,7 @@ def parse_rootdata_detail_html(html: str) -> LiveProjectDetail:
         detail.funding_total_usd = int(total_match.group(1) or total_match.group(2))
 
     detail.funding_rounds = parse_structured_funding_rounds(html)
-    detail.investors = parse_investors_from_text(html)
+    detail.investors = parse_investors_from_funding_rounds(detail.funding_rounds)
     if detail.funding_rounds:
         detail.funding_total_usd = sum(int(row.get("amount_usd", 0)) for row in detail.funding_rounds)
         latest_round = max(detail.funding_rounds, key=lambda row: str(row.get("date", "")))
