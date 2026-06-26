@@ -19,14 +19,18 @@ from urllib.request import Request, urlopen
 
 from score_project import (
     DEFAULT_BENCHMARK_CSV,
+    DEFAULT_FUNDRAISING_CSV,
+    TRACKED_FUNDRAISING_CSV,
     DEFAULT_WORKBOOK,
     append_history,
     build_assessment,
+    find_fundraising_rows,
+    fundraising_investors,
     history_path_for,
     load_benchmarks,
     write_workbook,
 )
-from project_scorer import calculate_chain_score, calculate_total_score, investor_highlights
+from project_scorer import calculate_chain_score, calculate_investor_score, calculate_total_score, investor_highlights
 from exchange_listings import db as exchange_listing_db
 from exchange_listings.adapters import fetch_live_sources
 from exchange_listings.sync import run_sync
@@ -1202,6 +1206,10 @@ def refresh_total_score(assessment: dict[str, Any]) -> dict[str, Any]:
     return assessment
 
 
+def has_total_score_components(assessment: dict[str, Any]) -> bool:
+    return all(key in assessment for key in ("team_score", "funding_score", "social_score"))
+
+
 def apply_cmc_chain_override(assessment: dict[str, Any]) -> dict[str, Any]:
     chains = cmc_token_chains(str(assessment.get("project_name", "")), str(assessment.get("token_ticker", "")))
     if not chains:
@@ -1383,10 +1391,52 @@ def has_binance_alpha_airdrop_evidence(row: dict[str, Any]) -> bool:
     return False
 
 
+def repo_path(path: Path) -> Path:
+    return path if path.is_absolute() else ROOT / path
+
+
+def fundraising_csv_path() -> Path:
+    default_path = repo_path(DEFAULT_FUNDRAISING_CSV)
+    if default_path.exists():
+        return default_path
+    return repo_path(TRACKED_FUNDRAISING_CSV)
+
+
+def backfill_cached_fundraising_investors(row: dict[str, Any]) -> dict[str, Any]:
+    investors = row.get("investors") or []
+    if isinstance(investors, str):
+        investor_values = [investors]
+    else:
+        investor_values = [str(value) for value in investors if str(value).strip()]
+
+    if not investor_values:
+        try:
+            fundraising_rows = load_benchmarks(fundraising_csv_path())
+        except Exception:
+            fundraising_rows = []
+        matches = find_fundraising_rows(
+            fundraising_rows,
+            token_ticker=str(row.get("token_ticker") or row.get("token_symbol") or ""),
+            project_name=str(row.get("project_name") or ""),
+            rootdata_url=str(row.get("rootdata_url") or ""),
+        )
+        investor_values = fundraising_investors(matches)
+        if investor_values:
+            row["investors"] = investor_values
+
+    if investor_values:
+        score = calculate_investor_score(investor_values)
+        if score > float(row.get("investor_score") or 0):
+            row["investor_score"] = score
+        highlights = investor_highlights(investor_values)
+        if highlights:
+            row["investor_highlights"] = highlights
+    return row
+
+
 def hydrate_cached_assessment(row: dict[str, Any]) -> dict[str, Any]:
     hydrated = dict(row)
-    if hydrated.get("investors") and not hydrated.get("investor_highlights"):
-        hydrated["investor_highlights"] = investor_highlights(hydrated.get("investors"))
+    backfill_cached_fundraising_investors(hydrated)
     prune_foreign_project_tge_links(hydrated)
     if (
         not hydrated.get("tge_date")
@@ -1438,6 +1488,8 @@ def refresh_assessment_market_state(row: dict[str, Any]) -> dict[str, Any]:
     listing_details = exchange_listing_details(detail_row)
     refreshed = {**row, **progress, **pre_tge_progress, "exchange_listing_details": listing_details}
     apply_cmc_market_tge_status(refreshed)
+    if has_total_score_components(refreshed):
+        refresh_total_score(refreshed)
     return refreshed
 
 

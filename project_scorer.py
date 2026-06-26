@@ -43,6 +43,7 @@ TOP_INVESTOR_KEYWORDS = {
     "multicoin",
     "jump crypto",
     "dragonfly",
+    "franklin templeton",
 }
 
 STRONG_INVESTOR_KEYWORDS = {
@@ -59,6 +60,24 @@ STRONG_INVESTOR_KEYWORDS = {
     "galaxy digital",
     "okx ventures",
     "hashkey",
+    "auros",
+    "auros ventures",
+    "breed vc",
+    "caladan",
+    "cmcc global",
+    "fasanara",
+    "fasanara capital",
+    "flow traders",
+    "flowdesk",
+    "gsr",
+    "imc trading",
+    "laser digital",
+    "presto",
+    "rockawayx",
+    "selini capital",
+    "superscrypt",
+    "triton capital",
+    "triton capital xyz",
 }
 
 CHAIN_SCORE_RULES = [

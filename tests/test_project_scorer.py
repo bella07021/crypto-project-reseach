@@ -631,6 +631,7 @@ class ProjectScorerTests(unittest.TestCase):
     def test_investor_and_chain_scores_prioritize_approved_signals(self):
         self.assertEqual(calculate_investor_score(["YZi Labs"]), 90.0)
         self.assertEqual(calculate_investor_score(["YZi Labs", "Coinbase Ventures"]), 100.0)
+        self.assertEqual(calculate_investor_score(["Franklin Templeton*", "GSR", "Flow Traders"]), 95.0)
         self.assertEqual(calculate_chain_score(["Base"]), 100.0)
         self.assertEqual(calculate_chain_score(["Solana"]), 95.0)
 
@@ -638,8 +639,11 @@ class ProjectScorerTests(unittest.TestCase):
         investors = [
             "Delphi",
             "Founders Fund*",
+            "Franklin Templeton*",
             "Maven11",
             "Mirana Ventures",
+            "GSR",
+            "Flow Traders",
             "Galaxy*",
             "dao5",
             "Nick White",
@@ -648,7 +652,7 @@ class ProjectScorerTests(unittest.TestCase):
 
         self.assertEqual(
             investor_highlights(investors),
-            ["Founders Fund*", "Delphi", "Maven11", "Mirana Ventures", "Galaxy*"],
+            ["Founders Fund*", "Franklin Templeton*", "Delphi", "Maven11", "Mirana Ventures", "GSR", "Flow Traders", "Galaxy*"],
         )
 
     def test_build_assessment_merges_rootdata_fundraising_investors(self):
@@ -835,7 +839,7 @@ class ProjectScorerTests(unittest.TestCase):
                 assessment["investors"],
                 ["Triton Capital XYZ*", "Franklin Templeton*", "Flowdesk"],
             )
-            self.assertEqual(assessment["investor_score"], 55.0)
+            self.assertEqual(assessment["investor_score"], 95.0)
             self.assertEqual(assessment["funding_sector_rank"], 290)
 
     def test_build_assessment_uses_deployable_fundraising_snapshot_fallback(self):

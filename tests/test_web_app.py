@@ -193,7 +193,7 @@ class WebAppTests(unittest.TestCase):
             json.loads(json.dumps(result))
 
     def test_dashboard_rows_keep_latest_per_project(self):
-        with patch(
+        with patch("web_app.load_benchmarks", return_value=[]), patch(
             "web_app.pre_tge_exchange_progress_from_db",
             return_value={
                 "pre_tge_exchange_score": 10.0,
@@ -247,6 +247,61 @@ class WebAppTests(unittest.TestCase):
         )
 
         self.assertEqual(rows[0]["assessment"]["investor_highlights"], ["Founders Fund*", "Delphi"])
+
+    def test_dashboard_rows_backfills_missing_investors_from_fundraising_snapshot(self):
+        history = [
+            {
+                "assessed_at": "2026-06-26T09:00:37+00:00",
+                "token_ticker": "CAP",
+                "project_name": "CAP",
+                "x_handle": "CapApp",
+                "rootdata_url": "https://www.rootdata.com/Projects/detail/CAP?k=MTQ3MDA%3D",
+                "team_score": 85.0,
+                "funding_score": 49.45,
+                "investor_score": 0.0,
+                "social_score": 28.84,
+                "chain_score": 80.0,
+                "pre_tge_exchange_score": 10.0,
+                "total_score": 42.41,
+                "investors": [],
+            }
+        ]
+
+        with patch(
+            "web_app.load_benchmarks",
+            return_value=[
+                {
+                    "token_symbol": "CAP",
+                    "project_name": "CAP",
+                    "project_name_en": "CAP",
+                    "project_url": "https://www.rootdata.com/Projects/detail/CAP?k=14700",
+                    "investors": "Franklin Templeton*; GSR; Flow Traders; Superscrypt",
+                }
+            ],
+        ), patch(
+            "web_app.project_exchange_progress",
+            return_value={
+                "exchange_score": 10.0,
+                "exchange_progress": 10.0,
+                "exchange_raw_score": 10.0,
+                "exchange_source": "cached",
+                "listed_exchanges": [],
+            },
+        ), patch(
+            "web_app.pre_tge_exchange_progress_from_db",
+            return_value={
+                "pre_tge_exchange_score": 95.0,
+                "pre_tge_exchange_source": "exchange_listings_db",
+                "pre_tge_listing_signals": [{"exchange": "Coinbase"}],
+                "exchange_listing_signals": [{"exchange": "Coinbase"}],
+            },
+        ):
+            rows = dashboard_rows(history)
+
+        self.assertEqual(rows[0]["investor_score"], 95.0)
+        self.assertEqual(rows[0]["pre_tge_exchange_score"], 95.0)
+        self.assertEqual(rows[0]["total_score"], 69.41)
+        self.assertEqual(rows[0]["assessment"]["investor_highlights"], ["Franklin Templeton*", "GSR", "Flow Traders", "Superscrypt"])
 
     def test_dashboard_rows_refreshes_cached_cmc_exchange_progress(self):
         with patch(
@@ -1659,6 +1714,70 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(payload["assessment"]["tge_status"], "已 TGE")
         self.assertEqual(payload["assessment"]["exchange_source"], "CoinMarketCap Data API")
         self.assertEqual(payload["assessment"]["listed_exchanges"], ["KuCoin", "Gate", "MEXC"])
+
+    def test_request_status_payload_recalculates_total_after_cached_backfill(self):
+        requests = [
+            {
+                "request_id": "req1",
+                "status": "done",
+                "token_ticker": "CAP",
+                "project_name": "CAP",
+                "x_handle": "CapApp",
+                "rootdata_url": "https://cn.rootdata.com/projects/detail/CAP?k=MTQ3MDA%3D",
+            }
+        ]
+        history = [
+            {
+                "assessed_at": "2026-06-26T09:00:37+00:00",
+                "token_ticker": "CAP",
+                "project_name": "CAP",
+                "x_handle": "CapApp",
+                "rootdata_url": "https://www.rootdata.com/Projects/detail/CAP?k=MTQ3MDA%3D",
+                "team_score": 85.0,
+                "funding_score": 49.45,
+                "investor_score": 0.0,
+                "social_score": 28.84,
+                "chain_score": 80.0,
+                "pre_tge_exchange_score": 10.0,
+                "total_score": 42.41,
+                "investors": [],
+            }
+        ]
+
+        with patch(
+            "web_app.load_benchmarks",
+            return_value=[
+                {
+                    "token_symbol": "CAP",
+                    "project_name": "CAP",
+                    "project_name_en": "CAP",
+                    "project_url": "https://www.rootdata.com/Projects/detail/CAP?k=14700",
+                    "investors": "Franklin Templeton*; GSR; Flow Traders",
+                }
+            ],
+        ), patch(
+            "web_app.project_exchange_progress",
+            return_value={
+                "exchange_score": 10.0,
+                "exchange_progress": 10.0,
+                "exchange_raw_score": 10.0,
+                "exchange_source": "cached",
+                "listed_exchanges": [],
+            },
+        ), patch(
+            "web_app.pre_tge_exchange_progress_from_db",
+            return_value={
+                "pre_tge_exchange_score": 95.0,
+                "pre_tge_exchange_source": "exchange_listings_db",
+                "pre_tge_listing_signals": [{"exchange": "Coinbase"}],
+                "exchange_listing_signals": [{"exchange": "Coinbase"}],
+            },
+        ):
+            payload = request_status_payload("req1", requests, history)
+
+        self.assertEqual(payload["assessment"]["investor_score"], 95.0)
+        self.assertEqual(payload["assessment"]["pre_tge_exchange_score"], 95.0)
+        self.assertEqual(payload["assessment"]["total_score"], 69.41)
 
     def test_request_status_payload_overrides_assessment_identity_from_request(self):
         requests = [
