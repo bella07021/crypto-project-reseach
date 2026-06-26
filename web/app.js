@@ -5,12 +5,13 @@ const state = {
   dashboardRows: [],
 };
 
-const form = document.querySelector("#scoreForm");
-const submitButton = document.querySelector("#submitButton");
-const reportMount = document.querySelector("#reportMount");
-const dashboardBody = document.querySelector("#dashboardRows");
-const topbar = document.querySelector("#topbar");
-const healthStatus = document.querySelector("#healthStatus");
+const hasDocument = typeof document !== "undefined";
+const form = hasDocument ? document.querySelector("#scoreForm") : null;
+const submitButton = hasDocument ? document.querySelector("#submitButton") : null;
+const reportMount = hasDocument ? document.querySelector("#reportMount") : null;
+const dashboardBody = hasDocument ? document.querySelector("#dashboardRows") : null;
+const topbar = hasDocument ? document.querySelector("#topbar") : null;
+const healthStatus = hasDocument ? document.querySelector("#healthStatus") : null;
 
 function numberText(value) {
   if (value === undefined || value === null || value === "") return "--";
@@ -189,8 +190,12 @@ function scoreReason(kind, assessment) {
     return `${base}；金额项 ${percentText(amountPart)}/50，时间项 ${percentText(recencyPart)}/50`;
   }
   if (kind === "investor") {
-    const investors = assessment.investor_highlights || [];
-    return investors.length ? investors.join("、") : "暂无明确投资方信息";
+    const highlights = assessment.investor_highlights || [];
+    if (highlights.length) return highlights.join("、");
+    const investors = uniqueTextValues(assessment.investors || []);
+    if (investors.length >= 3) return `已识别 ${investors.length} 个投资方，未命中顶级/强机构`;
+    if (investors.length) return investors.join("、");
+    return "暂无明确投资方信息";
   }
   if (kind === "chain") {
     const chains = assessment.chains || [];
@@ -615,49 +620,55 @@ async function checkHealth() {
   }
 }
 
-form.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  submitButton.disabled = true;
-  submitButton.textContent = "抓取 RootData";
-  try {
-    const payloadToScore = formPayload();
-    const requestResponse = await fetch("/api/request", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payloadToScore),
-    });
-    const requestPayload = await requestResponse.json().catch(() => ({}));
-    if (requestResponse.ok && requestPayload.ok) {
-      renderRequestStatus(requestPayload.request, requestPayload.created);
-      startRequestPolling(requestPayload.request);
+if (hasDocument) {
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    submitButton.disabled = true;
+    submitButton.textContent = "抓取 RootData";
+    try {
+      const payloadToScore = formPayload();
+      const requestResponse = await fetch("/api/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payloadToScore),
+      });
+      const requestPayload = await requestResponse.json().catch(() => ({}));
+      if (requestResponse.ok && requestPayload.ok) {
+        renderRequestStatus(requestPayload.request, requestPayload.created);
+        startRequestPolling(requestPayload.request);
+        await loadDashboard();
+        return;
+      }
+
+      const rootdataHtml = await fetchRootdataBrowserHtml(payloadToScore.rootdata_url);
+      if (rootdataHtml) payloadToScore.rootdata_html = rootdataHtml;
+      submitButton.textContent = "评分中";
+      const response = await fetch("/api/score", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payloadToScore),
+      });
+      const payload = await response.json();
+      if (!payload.ok) throw new Error(payload.error || "评分失败");
+      renderReport(payload.assessment, payload.workbook);
       await loadDashboard();
-      return;
+    } catch (error) {
+      reportMount.innerHTML = `<section class="report-section"><h3>评分失败</h3><p>${error.message}</p></section>`;
+    } finally {
+      submitButton.disabled = false;
+      submitButton.textContent = "开始更新评分";
     }
+  });
 
-    const rootdataHtml = await fetchRootdataBrowserHtml(payloadToScore.rootdata_url);
-    if (rootdataHtml) payloadToScore.rootdata_html = rootdataHtml;
-    submitButton.textContent = "评分中";
-    const response = await fetch("/api/score", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payloadToScore),
-    });
-    const payload = await response.json();
-    if (!payload.ok) throw new Error(payload.error || "评分失败");
-    renderReport(payload.assessment, payload.workbook);
-    await loadDashboard();
-  } catch (error) {
-    reportMount.innerHTML = `<section class="report-section"><h3>评分失败</h3><p>${error.message}</p></section>`;
-  } finally {
-    submitButton.disabled = false;
-    submitButton.textContent = "开始更新评分";
-  }
-});
+  document.querySelectorAll(".nav-item").forEach((item) => {
+    item.addEventListener("click", () => switchView(item.dataset.view));
+  });
+  document.querySelector("#refreshDashboard").addEventListener("click", loadDashboard);
 
-document.querySelectorAll(".nav-item").forEach((item) => {
-  item.addEventListener("click", () => switchView(item.dataset.view));
-});
-document.querySelector("#refreshDashboard").addEventListener("click", loadDashboard);
+  checkHealth();
+  loadDashboard();
+}
 
-checkHealth();
-loadDashboard();
+if (typeof module !== "undefined") {
+  module.exports = { _private: { scoreReason } };
+}
