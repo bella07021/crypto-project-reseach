@@ -792,6 +792,52 @@ class ProjectScorerTests(unittest.TestCase):
                 assessment["evidence_notes"],
             )
 
+    def test_build_assessment_matches_fundraising_rows_by_decoded_rootdata_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            benchmark = tmp_path / "benchmark.csv"
+            fundraising = tmp_path / "fundraising.csv"
+            workbook = tmp_path / "scores.xlsx"
+            benchmark.write_text(
+                "bucket,project_name,token_symbol,project_url,x_handle,x_followers\n"
+                "defi,CAP,,https://cn.rootdata.com/Projects/detail/CAP?k=MTQ3MDA%3D,CapApp,1000\n",
+                encoding="utf-8",
+            )
+            fundraising.write_text(
+                "project_name,project_name_en,token_symbol,amount_usd,funding_date,sector_cn,sector_en,sector_rank,investors,project_url\n"
+                "CAP,CAP,,8000000,2025-04-07,DeFi,DeFi,290,Triton Capital XYZ*; Franklin Templeton*; Flowdesk,https://cn.rootdata.com/Projects/detail/CAP?k=14700\n",
+                encoding="utf-8",
+            )
+            args = argparse.Namespace(
+                x_handle="CapApp",
+                rootdata_url="https://cn.rootdata.com/Projects/detail/CAP?k=MTQ3MDA%3D",
+                token_ticker="CAP",
+                project_name="CAP",
+                team_raw_score=85,
+                team_background="international",
+                funding_amount_usd=5_500_000,
+                funding_date="2026-06-18",
+                bucket="defi",
+                tge_signal=[],
+                listing_signal=[],
+                evidence_note=[],
+                benchmark_csv=benchmark,
+                fundraising_csv=fundraising,
+                workbook=workbook,
+                today="2026-06-26",
+                no_live=True,
+                rootdata_html="",
+            )
+
+            assessment = build_assessment(args)
+
+            self.assertEqual(
+                assessment["investors"],
+                ["Triton Capital XYZ*", "Franklin Templeton*", "Flowdesk"],
+            )
+            self.assertEqual(assessment["investor_score"], 55.0)
+            self.assertEqual(assessment["funding_sector_rank"], 290)
+
     def test_build_assessment_uses_deployable_fundraising_snapshot_fallback(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

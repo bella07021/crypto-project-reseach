@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -91,7 +92,22 @@ def normalize_rootdata_url(url: str) -> str:
     path = parsed.path.lower().replace("/projects/detail/", "/projects/detail/")
     query = parse_qs(parsed.query)
     key = query.get("k", [""])[0]
+    key = normalize_rootdata_key(key)
     return f"{host}{path}?k={key}"
+
+
+def normalize_rootdata_key(key: str) -> str:
+    value = key.strip()
+    if not value:
+        return ""
+    if value.isdigit():
+        return value
+    try:
+        padded = value + "=" * (-len(value) % 4)
+        decoded = base64.b64decode(padded, validate=True).decode("ascii").strip()
+    except (ValueError, UnicodeDecodeError):
+        return value
+    return decoded if decoded.isdigit() else value
 
 
 def rootdata_fetch_url(url: str) -> str:
