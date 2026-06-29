@@ -1066,6 +1066,34 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(pairs[0]["market_pair"], "QAIT/USDT")
         self.assertGreaterEqual(run.call_count, 1)
 
+    def test_cmc_web_market_pairs_tries_app_suffix_for_symbol_named_project(self):
+        captured_slugs = []
+
+        def fake_fetch(slug, token_ticker):
+            captured_slugs.append(slug)
+            if slug == "cap-app":
+                return [
+                    {
+                        "exchange": {"name": "Coinbase Exchange", "slug": "coinbase-exchange"},
+                        "market_pair": "CAP/USD",
+                        "category": "spot",
+                        "source": "CoinMarketCap Data API",
+                    },
+                    {
+                        "exchange": {"name": "Kraken", "slug": "kraken"},
+                        "market_pair": "CAP/USD",
+                        "category": "spot",
+                        "source": "CoinMarketCap Data API",
+                    },
+                ]
+            return []
+
+        with patch("web_app.fetch_cmc_data_api_market_pairs", side_effect=fake_fetch), patch("web_app.subprocess.run"):
+            pairs = fetch_cmc_web_market_pairs("CAP", "CAP")
+
+        self.assertEqual(captured_slugs[:3], ["cap", "cap-labs", "cap-app"])
+        self.assertEqual(pairs[0]["exchange"]["name"], "Coinbase Exchange")
+
     def test_project_exchange_progress_does_not_filter_cmc_by_project_name_when_ticker_missing(self):
         captured = {}
 

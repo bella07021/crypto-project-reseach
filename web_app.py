@@ -621,6 +621,19 @@ def slugify_project_name(value: str) -> str:
     return slug.strip("-")
 
 
+def cmc_candidate_slugs(project_name: str, token_ticker: str) -> list[str]:
+    slug = slugify_project_name(project_name)
+    token_slug = slugify_project_name(token_ticker)
+    candidates = [
+        slug,
+        f"{slug}-labs" if slug else "",
+        f"{slug}-app" if slug else "",
+        token_slug,
+        f"{token_slug}-app" if token_slug else "",
+    ]
+    return [candidate for candidate in dict.fromkeys(candidates) if candidate]
+
+
 def normalize_cmc_chain_name(value: str) -> str:
     lowered = value.lower()
     if "bnb" in lowered or "bep20" in lowered or "bsc" in lowered:
@@ -638,10 +651,7 @@ def normalize_cmc_chain_name(value: str) -> str:
 
 def fetch_cmc_token_detail(project_name: str, token_ticker: str) -> dict[str, Any]:
     symbol = token_ticker.upper().strip()
-    slugs = [slugify_project_name(project_name)]
-    if slugs[0]:
-        slugs.append(f"{slugs[0]}-labs")
-    for slug in [candidate for candidate in slugs if candidate]:
+    for slug in cmc_candidate_slugs(project_name, token_ticker):
         cache_key = f"detail:{slug}"
         if cache_key not in CMC_TOKEN_DETAIL_CACHE:
             request = Request(
@@ -723,8 +733,7 @@ def fetch_cmc_web_market_pairs(project_name: str, token_ticker: str) -> list[dic
 
     script = ROOT / "cmc_market_scrape.js"
     pairs: list[dict[str, Any]] = []
-    candidate_slugs = list(dict.fromkeys([slug, f"{slug}-labs" if slug else "", token_slug]))
-    for candidate_slug in [candidate for candidate in candidate_slugs if candidate]:
+    for candidate_slug in cmc_candidate_slugs(project_name, token_ticker):
         candidate_pairs = fetch_cmc_data_api_market_pairs(candidate_slug, symbol)
         if symbol:
             candidate_pairs = [
