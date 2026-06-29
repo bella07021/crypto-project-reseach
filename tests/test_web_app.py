@@ -1221,6 +1221,103 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(rows[0]["assessment"]["tge_status"], "未 TGE")
         self.assertEqual(rows[0]["assessment"]["tge_date"], "")
 
+    def test_dashboard_rows_ignores_rootdata_tge_and_db_listing_when_cmc_markets_are_missing(self):
+        with patch(
+            "web_app.project_exchange_progress",
+            return_value={
+                "exchange_score": 10.0,
+                "exchange_progress": 10.0,
+                "exchange_raw_score": 0,
+                "exchange_source": "RootData",
+                "listed_exchanges": [],
+            },
+        ), patch(
+            "web_app.pre_tge_exchange_progress_from_db",
+            return_value={
+                "pre_tge_exchange_score": 80.0,
+                "pre_tge_exchange_source": "exchange_listings_db",
+                "pre_tge_listing_signals": [],
+                "exchange_listing_signals": [
+                    {
+                        "exchange": "Bybit",
+                        "trading_start_time": "2026-06-26T12:00:00Z",
+                    }
+                ],
+            },
+        ):
+            rows = dashboard_rows(
+                [
+                    {
+                        "project_name": "CAP",
+                        "token_ticker": "CAP",
+                        "x_handle": "CapApp",
+                        "rootdata_url": "https://cn.rootdata.com/projects/detail/CAP?k=MTQ3MDA%3D",
+                        "total_score": 42.41,
+                        "tge_status": "未 TGE",
+                        "tge_date": "",
+                        "exchange_source": "RootData",
+                        "listed_exchanges": [],
+                        "roadmap_events": [
+                            {
+                                "type": "TGE",
+                                "name": "CAP is live for trading",
+                                "date": "2026-06-26",
+                                "url": "https://x.com/caplabslimited/status/2069602727483850831",
+                            }
+                        ],
+                    }
+                ]
+            )
+
+        self.assertEqual(rows[0]["tge_status"], "未 TGE")
+        self.assertEqual(rows[0]["tge_date"], "")
+        self.assertEqual(rows[0]["assessment"]["tge_method"], "")
+        self.assertEqual(rows[0]["exchange_listing_details"], [])
+
+    def test_dashboard_rows_cmc_tge_overrides_icodrops_method(self):
+        with patch(
+            "web_app.project_exchange_progress",
+            return_value={
+                "exchange_score": 55.0,
+                "exchange_progress": 55.0,
+                "exchange_raw_score": 55.0,
+                "exchange_source": "CoinMarketCap Web",
+                "listed_exchanges": ["KuCoin", "MEXC"],
+            },
+        ), patch(
+            "web_app.pre_tge_exchange_progress_from_db",
+            return_value={
+                "pre_tge_exchange_score": 40.0,
+                "pre_tge_exchange_source": "exchange_listings_db",
+                "pre_tge_listing_signals": [
+                    {
+                        "exchange": "KuCoin",
+                        "trading_start_time": "2026-05-28T13:00:00Z",
+                    }
+                ],
+            },
+        ):
+            rows = dashboard_rows(
+                [
+                    {
+                        "project_name": "Solstice",
+                        "token_ticker": "SLX",
+                        "x_handle": "solsticefi",
+                        "rootdata_url": "https://cn.rootdata.com/projects/detail/Solstice?k=MTQ0NjI%3D",
+                        "tge_status": "已 TGE",
+                        "tge_method": "Binance Alpha Airdrop",
+                        "tge_date": "2026-05-25",
+                        "tge_evidence_links": [
+                            {"text": "Binance Alpha Airdrop", "url": "https://icodrops.com/solstice/"}
+                        ],
+                    }
+                ]
+            )
+
+        self.assertEqual(rows[0]["tge_status"], "已 TGE")
+        self.assertEqual(rows[0]["tge_method"], "CoinMarketCap Markets")
+        self.assertEqual(rows[0]["tge_date"], "2026-05-28")
+
     def test_dashboard_rows_downgrades_tge_without_exchange_and_prunes_foreign_x_links(self):
         rows = dashboard_rows(
             [

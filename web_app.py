@@ -180,9 +180,9 @@ def score_payload(data: dict[str, Any]) -> dict[str, Any]:
         apply_icodrops_tge_signal_from_web(assessment)
     prune_foreign_project_tge_links(assessment)
     apply_tge_exchange_gate(assessment)
+    assessment["exchange_listing_details"] = cmc_exchange_listing_details(assessment)
     if not payload.no_live:
         apply_cmc_market_tge_status(assessment)
-    assessment["exchange_listing_details"] = exchange_listing_details(assessment)
     if github_storage_config():
         history = append_github_history(assessment)
         workbook = github_storage_label()
@@ -1322,29 +1322,20 @@ def apply_cmc_market_tge_status(assessment: dict[str, Any]) -> dict[str, Any]:
     if has_cmc_markets:
         assessment["tge_status"] = "已 TGE"
         assessment["tge_probability"] = 100
-        if not assessment.get("tge_date"):
-            assessment["tge_date"] = earliest_exchange_listed_date(assessment)
-        assessment["tge_method"] = assessment.get("tge_method") or "CoinMarketCap Markets"
+        assessment["tge_date"] = earliest_exchange_listed_date(assessment)
+        assessment["tge_method"] = "CoinMarketCap Markets"
         notes = assessment.setdefault("evidence_notes", [])
         note = f"CMC markets detected listed exchanges: {', '.join(assessment.get('listed_exchanges', []))}"
         if note not in notes:
             notes.append(note)
         return assessment
 
-    if (
-        assessment.get("tge_status") == "已 TGE"
-        or assessment.get("tge_probability")
-        or assessment.get("tge_date")
-        or assessment.get("tge_method")
-        or assessment.get("tge_evidence")
-        or assessment.get("tge_evidence_links")
-    ):
-        assessment["tge_status"] = "未 TGE"
-        assessment["tge_probability"] = 0
-        assessment["tge_date"] = ""
-        assessment["tge_method"] = ""
-        assessment["tge_evidence"] = []
-        assessment["tge_evidence_links"] = []
+    assessment["tge_status"] = "未 TGE"
+    assessment["tge_probability"] = 0
+    assessment["tge_date"] = ""
+    assessment["tge_method"] = ""
+    assessment["tge_evidence"] = []
+    assessment["tge_evidence_links"] = []
     return assessment
 
 
@@ -1356,6 +1347,12 @@ def earliest_exchange_listed_date(assessment: dict[str, Any]) -> str:
     ]
     dates = [date for date in dates if date]
     return min(dates) if dates else ""
+
+
+def cmc_exchange_listing_details(row: dict[str, Any]) -> list[dict[str, Any]]:
+    if not is_cmc_exchange_source(row.get("exchange_source")) or not assessment_has_listed_exchange(row):
+        return []
+    return exchange_listing_details(row)
 
 
 def is_foreign_project_x_status(url: str, x_handle: str) -> bool:
@@ -1463,7 +1460,11 @@ def cached_exchange_progress(row: dict[str, Any]) -> dict[str, Any] | None:
         "exchange_raw_score": row.get("exchange_raw_score", 0),
         "exchange_source": row.get("exchange_source", "cached"),
         "listed_exchanges": row.get("listed_exchanges", []),
-        "exchange_listing_details": row.get("exchange_listing_details") or exchange_listing_details(row),
+        "exchange_listing_details": (
+            row.get("exchange_listing_details")
+            if is_cmc_exchange_source(row.get("exchange_source"))
+            else []
+        ) or cmc_exchange_listing_details(row),
     }
 
 
@@ -1485,7 +1486,7 @@ def refresh_assessment_market_state(row: dict[str, Any]) -> dict[str, Any]:
     progress = dashboard_exchange_progress(row)
     pre_tge_progress = pre_tge_exchange_progress_from_db(row)
     detail_row = {**row, **progress, **pre_tge_progress}
-    listing_details = exchange_listing_details(detail_row)
+    listing_details = cmc_exchange_listing_details(detail_row)
     refreshed = {**row, **progress, **pre_tge_progress, "exchange_listing_details": listing_details}
     apply_cmc_market_tge_status(refreshed)
     if has_total_score_components(refreshed):
