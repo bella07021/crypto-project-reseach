@@ -19,3 +19,20 @@ test("tgeSummary keeps an explicit TGE label when the date is unknown", () => {
     "已 TGE（日期待确认）",
   );
 });
+
+test("scoreReason lists only pre-TGE exchange announcements", () => {
+  assert.equal(
+    _private.scoreReason("exchange", {
+      pre_tge_listing_signals: [
+        { exchange: "OKX" },
+        { exchange: "KuCoin" },
+      ],
+      exchange_listing_signals: [
+        { exchange: "OKX" },
+        { exchange: "KuCoin" },
+        { exchange: "Bithumb 韩元现货" },
+      ],
+    }),
+    "OKX、KuCoin",
+  );
+});

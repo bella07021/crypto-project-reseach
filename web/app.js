@@ -204,10 +204,7 @@ function scoreReason(kind, assessment) {
     return chains.length ? chains.join("、") : "暂无明确链生态信息";
   }
   if (kind === "exchange") {
-    const signals = [
-      ...(assessment.pre_tge_listing_signals || []),
-      ...(assessment.exchange_listing_signals || []),
-    ];
+    const signals = assessment.pre_tge_listing_signals || [];
     if (!signals.length) return "暂无 exchange listings 预上线信号";
     const exchanges = uniqueTextValues(signals.map((item) => exchangeDisplayName(item.exchange)));
     return exchanges.length ? exchanges.join("、") : "暂无 exchange listings 预上线信号";
