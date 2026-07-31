@@ -1657,7 +1657,21 @@ def combined_dashboard_rows(history: list[dict[str, Any]], requests: list[dict[s
                 "cmc_url": cmc_url,
             }
 
-    rows = dashboard_rows(history)
+    history_with_overrides = []
+    for assessment in history:
+        assessment = dict(assessment)
+        request_key = project_request_key(
+            str(assessment.get("rootdata_url", "")),
+            str(assessment.get("x_handle", "")),
+        )
+        override = request_overrides.get(request_key)
+        if override:
+            for field in ("token_ticker", "project_name", "cmc_url"):
+                if override.get(field):
+                    assessment[field] = override[field]
+        history_with_overrides.append(assessment)
+
+    rows = dashboard_rows(history_with_overrides)
     for row in rows:
         request_key = project_request_key(str(row.get("rootdata_url", "")), str(row.get("x_handle", "")))
         override = request_overrides.get(request_key)

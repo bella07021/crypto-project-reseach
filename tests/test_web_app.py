@@ -1980,31 +1980,40 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(payload["assessment"]["project_name"], "Citrea")
 
     def test_combined_dashboard_rows_overrides_history_identity_from_done_request(self):
-        rows = combined_dashboard_rows(
-            [
-                {
-                    "x_handle": "citrea_xyz",
-                    "rootdata_url": "https://www.rootdata.com/Projects/detail/Citrea?k=MTEyNTk%3D",
-                    "project_name": "Citrea",
-                    "token_ticker": "",
-                    "total_score": 35.88,
-                }
-            ],
-            [
-                {
-                    "request_id": "req1",
-                    "status": "done",
-                    "token_ticker": "CTR",
-                    "project_name": "Citrea",
-                    "x_handle": "citrea_xyz",
-                    "rootdata_url": "https://cn.rootdata.com/projects/detail/Citrea?k=MTEyNTk%3D",
-                }
-            ],
-        )
+        refreshed_rows = []
+
+        def fake_refresh(row):
+            refreshed_rows.append(dict(row))
+            return dict(row)
+
+        with patch("web_app.refresh_assessment_market_state", side_effect=fake_refresh):
+            rows = combined_dashboard_rows(
+                [
+                    {
+                        "x_handle": "citrea_xyz",
+                        "rootdata_url": "https://www.rootdata.com/Projects/detail/Citrea?k=MTEyNTk%3D",
+                        "project_name": "Citrea",
+                        "token_ticker": "",
+                        "total_score": 35.88,
+                    }
+                ],
+                [
+                    {
+                        "request_id": "req1",
+                        "status": "done",
+                        "token_ticker": "CTR",
+                        "project_name": "Citrea",
+                        "x_handle": "citrea_xyz",
+                        "rootdata_url": "https://cn.rootdata.com/projects/detail/Citrea?k=MTEyNTk%3D",
+                        "cmc_url": "https://coinmarketcap.com/currencies/citrea/",
+                    }
+                ],
+            )
 
         self.assertEqual(rows[0]["token_ticker"], "CTR")
         self.assertEqual(rows[0]["project_name"], "Citrea")
         self.assertEqual(rows[0]["assessment"]["token_ticker"], "CTR")
+        self.assertEqual(refreshed_rows[0]["cmc_url"], "https://coinmarketcap.com/currencies/citrea/")
 
     def test_request_status_payload_does_not_return_old_assessment_for_refresh_request(self):
         requests = [
