@@ -15,6 +15,7 @@ from web_app import (
     dashboard_rows,
     request_status_payload,
     request_dashboard_rows,
+    refresh_assessment_market_state,
     delete_project_data,
     exchange_progress,
     exchange_listing_details,
@@ -37,6 +38,56 @@ from web_app import (
 
 
 class WebAppTests(unittest.TestCase):
+    def test_market_refresh_recalculates_pre_tge_score_after_tge_date_is_known(self):
+        observed_tge_dates = []
+
+        def fake_pre_tge(row, db_path=None):
+            observed_tge_dates.append(row.get("tge_date", ""))
+            return {
+                "pre_tge_exchange_score": 78.0 if row.get("tge_date") else 95.0,
+                "pre_tge_exchange_source": "exchange_listings_db",
+                "pre_tge_listing_signals": [],
+                "exchange_listing_signals": [],
+            }
+
+        def fake_apply_cmc_status(row):
+            row["tge_status"] = "已 TGE"
+            row["tge_date"] = "2026-07-27"
+            return row
+
+        with patch(
+            "web_app.dashboard_exchange_progress",
+            return_value={
+                "exchange_source": "CoinMarketCap Data API",
+                "listed_exchanges": ["OKX", "Bithumb 韩元现货"],
+            },
+        ), patch(
+            "web_app.pre_tge_exchange_progress_from_db",
+            side_effect=fake_pre_tge,
+        ), patch(
+            "web_app.cmc_exchange_listing_details",
+            return_value=[],
+        ), patch(
+            "web_app.apply_cmc_market_tge_status",
+            side_effect=fake_apply_cmc_status,
+        ):
+            refreshed = refresh_assessment_market_state(
+                {
+                    "token_ticker": "AEON",
+                    "project_name": "AEON",
+                    "tge_date": "",
+                    "team_score": 85,
+                    "funding_score": 86.93,
+                    "social_score": 59.96,
+                    "investor_score": 95,
+                    "chain_score": 100,
+                }
+            )
+
+        self.assertEqual(observed_tge_dates, ["", "2026-07-27"])
+        self.assertEqual(refreshed["tge_date"], "2026-07-27")
+        self.assertEqual(refreshed["pre_tge_exchange_score"], 78.0)
+
     def test_routed_request_path_recovers_vercel_rewrite_destination(self):
         self.assertEqual(routed_request_path("/api/index.py?__route=/&source=web"), "/")
         self.assertEqual(

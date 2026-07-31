@@ -187,6 +187,10 @@ def score_payload(data: dict[str, Any]) -> dict[str, Any]:
     assessment["exchange_listing_details"] = cmc_exchange_listing_details(assessment)
     if not payload.no_live:
         apply_cmc_market_tge_status(assessment)
+        if assessment.get("tge_date"):
+            assessment.update(pre_tge_exchange_progress_from_db(assessment))
+            assessment["exchange_listing_details"] = cmc_exchange_listing_details(assessment)
+            refresh_total_score(assessment)
     if github_storage_config():
         history = append_github_history(assessment)
         workbook = github_storage_label()
@@ -1362,7 +1366,7 @@ def apply_cmc_market_tge_status(assessment: dict[str, Any]) -> dict[str, Any]:
     if has_cmc_markets:
         assessment["tge_status"] = "已 TGE"
         assessment["tge_probability"] = 100
-        assessment["tge_date"] = earliest_exchange_listed_date(assessment)
+        assessment["tge_date"] = assessment.get("tge_date") or earliest_exchange_listed_date(assessment)
         assessment["tge_method"] = "CoinMarketCap Markets"
         notes = assessment.setdefault("evidence_notes", [])
         note = f"CMC markets detected listed exchanges: {', '.join(assessment.get('listed_exchanges', []))}"
@@ -1529,6 +1533,9 @@ def refresh_assessment_market_state(row: dict[str, Any]) -> dict[str, Any]:
     listing_details = cmc_exchange_listing_details(detail_row)
     refreshed = {**row, **progress, **pre_tge_progress, "exchange_listing_details": listing_details}
     apply_cmc_market_tge_status(refreshed)
+    if refreshed.get("tge_date"):
+        refreshed.update(pre_tge_exchange_progress_from_db(refreshed))
+        refreshed["exchange_listing_details"] = cmc_exchange_listing_details(refreshed)
     if has_total_score_components(refreshed):
         refresh_total_score(refreshed)
     return refreshed
