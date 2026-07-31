@@ -15,6 +15,7 @@ class RequestWatcherTests(unittest.TestCase):
                 "project_name": "Nexus",
                 "x_handle": "NexusLabs",
                 "rootdata_url": "https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D",
+                "cmc_url": "https://coinmarketcap.com/currencies/nexus/",
             }
         ]
 
@@ -37,6 +38,7 @@ class RequestWatcherTests(unittest.TestCase):
                 "project_name": "Nexus",
                 "x_handle": "NexusLabs",
                 "rootdata_url": "https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D",
+                "cmc_url": "https://coinmarketcap.com/currencies/nexus/",
             }
         )
         self.assertEqual(writes[0][0][0]["status"], "processing")

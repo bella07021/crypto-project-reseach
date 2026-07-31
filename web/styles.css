@@ -88,7 +88,7 @@ h1 { font-size: 28px; line-height: 1.2; }
 
 .input-bar {
   display: grid;
-  grid-template-columns: 140px 200px 260px minmax(320px, 1fr) auto;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 12px;
   align-items: end;
   padding: 16px;
@@ -97,6 +97,13 @@ h1 { font-size: 28px; line-height: 1.2; }
   border-radius: 8px;
   margin-bottom: 16px;
 }
+
+.input-token { grid-column: span 2; }
+.input-project { grid-column: span 3; }
+.input-x { grid-column: span 7; }
+.input-rootdata,
+.input-cmc { grid-column: span 5; }
+.input-bar > button { grid-column: span 2; }
 
 label { display: grid; gap: 7px; }
 label span, .eyebrow, dt, .section-title span { color: var(--muted); font-size: 13px; }
@@ -595,6 +602,9 @@ dd { margin: 0; word-break: break-word; }
   .fact-grid,
   .timeline-item {
     grid-template-columns: 1fr;
+  }
+  .input-bar > * {
+    grid-column: 1;
   }
   .timeline-date,
   .timeline-days,

@@ -75,6 +75,7 @@ function formPayload() {
     project_name: data.get("project_name"),
     x_handle: data.get("x_handle"),
     rootdata_url: data.get("rootdata_url"),
+    cmc_url: data.get("cmc_url"),
   };
 }
 
@@ -91,6 +92,7 @@ function populateProjectForm(project) {
     project_name: project.project_name || "",
     x_handle: xInputValue(project),
     rootdata_url: project.rootdata_url || "",
+    cmc_url: project.cmc_url || "",
   };
   for (const [name, value] of Object.entries(values)) {
     const input = form.elements.namedItem(name);
@@ -459,6 +461,7 @@ function renderRequestStatus(request, created) {
         <div><span>项目名</span><strong>${request.project_name || "--"}</strong></div>
         <div><span>X</span><strong>@${request.x_handle || "--"}</strong></div>
         <div><span>RootData</span><strong>${request.rootdata_url || "--"}</strong></div>
+        <div><span>CoinMarketCap</span><strong>${request.cmc_url || "--"}</strong></div>
       </div>
       <ul class="clean-list">
         <li>${statusText}</li>

@@ -8,6 +8,8 @@ from unittest.mock import patch
 from exchange_listings import db as exchange_listing_db
 from web_app import (
     append_github_history,
+    cmc_candidate_slugs,
+    cmc_slug_from_url,
     combined_dashboard_rows,
     create_project_request,
     dashboard_rows,
@@ -29,11 +31,20 @@ from web_app import (
     handle_post_api,
     exchange_listings_db_path,
     exchange_listings_db_status,
+    routed_request_path,
     ROOT,
 )
 
 
 class WebAppTests(unittest.TestCase):
+    def test_routed_request_path_recovers_vercel_rewrite_destination(self):
+        self.assertEqual(routed_request_path("/api/index.py?__route=/&source=web"), "/")
+        self.assertEqual(
+            routed_request_path("/api/index.py?__route=/api/request-status&id=abc123"),
+            "/api/request-status",
+        )
+        self.assertEqual(routed_request_path("/api/health"), "/api/health")
+
     def test_exchange_listing_sync_endpoint_delegates(self):
         sync_body = {"exchanges": ["coinbase", "kraken"]}
         score_body = {
@@ -118,6 +129,7 @@ class WebAppTests(unittest.TestCase):
                 "rootdata_url": "https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D",
                 "token_ticker": "nex",
                 "project_name": "Nexus",
+                "cmc_url": "https://coinmarketcap.com/currencies/nexus/",
                 "bucket": "infra",
                 "tge_signals": ["tokenomics", "airdrop"],
                 "listing_signals": "binance_alpha",
@@ -128,6 +140,7 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(payload.x_handle, "NexusLabs")
         self.assertEqual(payload.token_ticker, "NEX")
         self.assertEqual(payload.project_name, "Nexus")
+        self.assertEqual(payload.cmc_url, "https://coinmarketcap.com/currencies/nexus/")
         self.assertEqual(payload.bucket, "infra")
         self.assertEqual(payload.tge_signal, ["tokenomics", "airdrop"])
         self.assertEqual(payload.listing_signal, ["binance_alpha"])
@@ -1094,12 +1107,38 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(captured_slugs[:3], ["cap", "cap-labs", "cap-app"])
         self.assertEqual(pairs[0]["exchange"]["name"], "Coinbase Exchange")
 
+    def test_cmc_link_slug_is_used_before_guessed_project_slugs(self):
+        captured_slugs = []
+
+        def fake_fetch(slug, token_ticker):
+            captured_slugs.append(slug)
+            if slug == "aeon-xyz":
+                return [
+                    {
+                        "exchange": {"name": "KuCoin", "slug": "kucoin"},
+                        "market_pair": "AEON/USDT",
+                        "category": "spot",
+                        "source": "CoinMarketCap Data API",
+                    }
+                ]
+            return []
+
+        cmc_url = "https://coinmarketcap.com/currencies/aeon-xyz/"
+        with patch("web_app.fetch_cmc_data_api_market_pairs", side_effect=fake_fetch), patch("web_app.subprocess.run"):
+            pairs = fetch_cmc_web_market_pairs("AEON", "AEON", cmc_url)
+
+        self.assertEqual(cmc_slug_from_url(cmc_url), "aeon-xyz")
+        self.assertEqual(cmc_candidate_slugs("AEON", "AEON", cmc_url)[0], "aeon-xyz")
+        self.assertEqual(captured_slugs, ["aeon-xyz"])
+        self.assertEqual(pairs[0]["market_pair"], "AEON/USDT")
+
     def test_project_exchange_progress_does_not_filter_cmc_by_project_name_when_ticker_missing(self):
         captured = {}
 
-        def fake_fetch(project_name, token_ticker):
+        def fake_fetch(project_name, token_ticker, cmc_url=""):
             captured["project_name"] = project_name
             captured["token_ticker"] = token_ticker
+            captured["cmc_url"] = cmc_url
             return [
                 {"exchange": {"name": "Bitget", "slug": "bitget"}, "market_pair": "SLX/USDT", "category": "spot"},
                 {"exchange": {"name": "Gate", "slug": "gate"}, "market_pair": "SLX/USDT", "category": "spot"},
@@ -1107,10 +1146,17 @@ class WebAppTests(unittest.TestCase):
             ]
 
         with patch("web_app.fetch_cmc_web_market_pairs", side_effect=fake_fetch):
-            progress = project_exchange_progress({"project_name": "Solstice", "token_ticker": ""})
+            progress = project_exchange_progress(
+                {
+                    "project_name": "Solstice",
+                    "token_ticker": "",
+                    "cmc_url": "https://coinmarketcap.com/currencies/solstice/",
+                }
+            )
 
         self.assertEqual(captured["project_name"], "Solstice")
         self.assertEqual(captured["token_ticker"], "")
+        self.assertEqual(captured["cmc_url"], "https://coinmarketcap.com/currencies/solstice/")
         self.assertEqual(progress["exchange_raw_score"], 40.0)
         self.assertEqual(progress["exchange_score"], 40.0)
         self.assertEqual(progress["listed_exchanges"], ["Bitget", "Gate", "MEXC"])
@@ -1666,6 +1712,7 @@ class WebAppTests(unittest.TestCase):
                     "rootdata_url": "https://cn.rootdata.com/projects/detail/Nexus?k=MTE3NDI%3D",
                     "token_ticker": "nex",
                     "project_name": "Nexus",
+                    "cmc_url": "https://coinmarketcap.com/currencies/nexus/",
                 }
             )
 
@@ -1674,6 +1721,7 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(result["request"]["x_handle"], "NexusLabs")
         self.assertEqual(result["request"]["token_ticker"], "NEX")
         self.assertEqual(result["request"]["project_name"], "Nexus")
+        self.assertEqual(result["request"]["cmc_url"], "https://coinmarketcap.com/currencies/nexus/")
         self.assertEqual(len(writes[0][0]), 1)
         self.assertEqual(writes[0][1], "Add project request for NEX")
 

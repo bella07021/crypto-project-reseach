@@ -1,6 +1,10 @@
 {
   "version": 2,
+  "framework": null,
   "functions": {
+    "api/index.py": {
+      "excludeFiles": "{.git/**,.vercel/**,.tmp/**,.cmc-chrome-profile/**,.rootdata-chrome-profile/**,.x-chrome-profile/**,tests/**,docs/**,launchd/**,logs/**,outputs/**,**/__pycache__/**}"
+    },
     "api/rootdata_browser.js": {
       "maxDuration": 60
     }
@@ -11,8 +15,16 @@
       "destination": "/api/rootdata_browser.js"
     },
     {
-      "source": "/(.*)",
-      "destination": "/api/index.py"
+      "source": "/api/:path*",
+      "destination": "/api/index.py?__route=/api/:path*"
+    },
+    {
+      "source": "/",
+      "destination": "/api/index.py?__route=/"
+    },
+    {
+      "source": "/:path*",
+      "destination": "/api/index.py?__route=/:path*"
     }
   ]
 }

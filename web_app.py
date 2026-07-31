@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlencode, urlparse
+from urllib.parse import parse_qs, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from score_project import (
@@ -66,6 +66,7 @@ def runtime_workbook_path() -> Path:
 class ScorePayload:
     x_handle: str
     rootdata_url: str
+    cmc_url: str = ""
     token_ticker: str = ""
     project_name: str = ""
     team_raw_score: float = 0.0
@@ -127,6 +128,7 @@ def parse_score_payload(data: dict[str, Any]) -> ScorePayload:
     return ScorePayload(
         x_handle=x_handle,
         rootdata_url=rootdata_url,
+        cmc_url=str(data.get("cmc_url") or "").strip(),
         token_ticker=str(data.get("token_ticker") or data.get("token_symbol") or "").strip().upper(),
         project_name=str(data.get("project_name") or "").strip(),
         team_raw_score=as_float(data.get("team_raw_score")),
@@ -149,6 +151,7 @@ def namespace_from_payload(payload: ScorePayload) -> argparse.Namespace:
     return argparse.Namespace(
         x_handle=payload.x_handle,
         rootdata_url=payload.rootdata_url,
+        cmc_url=payload.cmc_url,
         token_ticker=payload.token_ticker,
         project_name=payload.project_name,
         team_raw_score=payload.team_raw_score,
@@ -171,6 +174,7 @@ def score_payload(data: dict[str, Any]) -> dict[str, Any]:
     payload = parse_score_payload(data)
     args = namespace_from_payload(payload)
     assessment = build_assessment(args)
+    assessment["cmc_url"] = payload.cmc_url
     assessment.update(exchange_progress(assessment.get("roadmap_events", [])) if payload.no_live else project_exchange_progress(assessment))
     assessment.update(pre_tge_exchange_progress_from_db(assessment))
     if not payload.no_live:
@@ -533,6 +537,7 @@ def create_project_request(data: dict[str, Any]) -> dict[str, Any]:
     rootdata_url = str(data.get("rootdata_url", "")).strip()
     token_ticker = str(data.get("token_ticker") or data.get("token_symbol") or "").strip().upper()
     project_name = str(data.get("project_name") or "").strip()
+    cmc_url = str(data.get("cmc_url") or "").strip()
     if not x_handle:
         raise ValueError("x_handle is required")
     if not rootdata_url:
@@ -557,6 +562,7 @@ def create_project_request(data: dict[str, Any]) -> dict[str, Any]:
         "project_name": project_name,
         "x_handle": x_handle,
         "rootdata_url": rootdata_url,
+        "cmc_url": cmc_url,
         "requested_at": timestamp,
         "updated_at": timestamp,
     }
@@ -621,10 +627,29 @@ def slugify_project_name(value: str) -> str:
     return slug.strip("-")
 
 
-def cmc_candidate_slugs(project_name: str, token_ticker: str) -> list[str]:
+def cmc_slug_from_url(value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = urlparse(raw if re.match(r"^https?://", raw, re.I) else f"https://{raw}")
+    except ValueError:
+        return ""
+    host = (parsed.hostname or "").lower().removeprefix("www.")
+    if host != "coinmarketcap.com" and not host.endswith(".coinmarketcap.com"):
+        return ""
+    parts = [unquote(part).strip() for part in parsed.path.split("/") if part.strip()]
+    for index, part in enumerate(parts[:-1]):
+        if part.lower() == "currencies":
+            return slugify_project_name(parts[index + 1])
+    return ""
+
+
+def cmc_candidate_slugs(project_name: str, token_ticker: str, cmc_url: str = "") -> list[str]:
     slug = slugify_project_name(project_name)
     token_slug = slugify_project_name(token_ticker)
     candidates = [
+        cmc_slug_from_url(cmc_url),
         slug,
         f"{slug}-labs" if slug else "",
         f"{slug}-app" if slug else "",
@@ -649,9 +674,9 @@ def normalize_cmc_chain_name(value: str) -> str:
     return value.strip()
 
 
-def fetch_cmc_token_detail(project_name: str, token_ticker: str) -> dict[str, Any]:
+def fetch_cmc_token_detail(project_name: str, token_ticker: str, cmc_url: str = "") -> dict[str, Any]:
     symbol = token_ticker.upper().strip()
-    for slug in cmc_candidate_slugs(project_name, token_ticker):
+    for slug in cmc_candidate_slugs(project_name, token_ticker, cmc_url):
         cache_key = f"detail:{slug}"
         if cache_key not in CMC_TOKEN_DETAIL_CACHE:
             request = Request(
@@ -671,8 +696,8 @@ def fetch_cmc_token_detail(project_name: str, token_ticker: str) -> dict[str, An
     return {}
 
 
-def cmc_token_chains(project_name: str, token_ticker: str) -> list[str]:
-    detail = fetch_cmc_token_detail(project_name, token_ticker)
+def cmc_token_chains(project_name: str, token_ticker: str, cmc_url: str = "") -> list[str]:
+    detail = fetch_cmc_token_detail(project_name, token_ticker, cmc_url)
     chains: list[str] = []
     for platform in detail.get("platforms", []) or []:
         chain = normalize_cmc_chain_name(str(platform.get("contractPlatform") or ""))
@@ -720,20 +745,21 @@ def fetch_cmc_data_api_market_pairs(slug: str, token_ticker: str) -> list[dict[s
     return pairs
 
 
-def fetch_cmc_web_market_pairs(project_name: str, token_ticker: str) -> list[dict[str, Any]]:
+def fetch_cmc_web_market_pairs(project_name: str, token_ticker: str, cmc_url: str = "") -> list[dict[str, Any]]:
     slug = slugify_project_name(project_name)
     symbol = token_ticker.upper().strip()
     token_slug = slugify_project_name(token_ticker)
     if not slug and not token_slug:
         return []
 
-    cache_key = f"web:{slug or token_slug}:{symbol}"
+    cmc_slug = cmc_slug_from_url(cmc_url)
+    cache_key = f"web:{slug or token_slug}:{cmc_slug}:{symbol}"
     if cache_key in CMC_MARKET_CACHE:
         return CMC_MARKET_CACHE[cache_key]
 
     script = ROOT / "cmc_market_scrape.js"
     pairs: list[dict[str, Any]] = []
-    for candidate_slug in cmc_candidate_slugs(project_name, token_ticker):
+    for candidate_slug in cmc_candidate_slugs(project_name, token_ticker, cmc_url):
         candidate_pairs = fetch_cmc_data_api_market_pairs(candidate_slug, symbol)
         if symbol:
             candidate_pairs = [
@@ -1193,6 +1219,7 @@ def project_exchange_progress(row: dict[str, Any]) -> dict[str, Any]:
     cmc_pairs = fetch_cmc_web_market_pairs(
         str(row.get("project_name", "")),
         token_ticker,
+        str(row.get("cmc_url", "")),
     )
     if not cmc_pairs:
         cmc_pairs = fetch_cmc_market_pairs(
@@ -1220,7 +1247,11 @@ def has_total_score_components(assessment: dict[str, Any]) -> bool:
 
 
 def apply_cmc_chain_override(assessment: dict[str, Any]) -> dict[str, Any]:
-    chains = cmc_token_chains(str(assessment.get("project_name", "")), str(assessment.get("token_ticker", "")))
+    chains = cmc_token_chains(
+        str(assessment.get("project_name", "")),
+        str(assessment.get("token_ticker", "")),
+        str(assessment.get("cmc_url", "")),
+    )
     if not chains:
         return assessment
     assessment["chains"] = chains
@@ -1519,6 +1550,7 @@ def dashboard_rows(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "project_name": row.get("project_name", ""),
                 "x_handle": row.get("x_handle", ""),
                 "rootdata_url": row.get("rootdata_url", ""),
+                "cmc_url": assessment.get("cmc_url", row.get("cmc_url", "")),
                 "total_score": assessment.get("total_score", 0),
                 "team_score": row.get("team_score", 0),
                 "funding_score": row.get("funding_score", 0),
@@ -1578,6 +1610,7 @@ def request_dashboard_rows(requests: list[dict[str, Any]], history: list[dict[st
                 "project_name": request.get("project_name") or "",
                 "x_handle": x_handle,
                 "rootdata_url": request.get("rootdata_url", ""),
+                "cmc_url": request.get("cmc_url", ""),
                 "total_score": "",
                 "team_score": "",
                 "funding_score": "",
@@ -1616,10 +1649,12 @@ def combined_dashboard_rows(history: list[dict[str, Any]], requests: list[dict[s
             continue
         token_ticker = str(request.get("token_ticker") or "").strip()
         project_name = str(request.get("project_name") or "").strip()
-        if token_ticker or project_name:
+        cmc_url = str(request.get("cmc_url") or "").strip()
+        if token_ticker or project_name or cmc_url:
             request_overrides[request_key] = {
                 "token_ticker": token_ticker,
                 "project_name": project_name,
+                "cmc_url": cmc_url,
             }
 
     rows = dashboard_rows(history)
@@ -1634,6 +1669,9 @@ def combined_dashboard_rows(history: list[dict[str, Any]], requests: list[dict[s
         if override.get("project_name"):
             row["project_name"] = override["project_name"]
             row["assessment"]["project_name"] = override["project_name"]
+        if override.get("cmc_url"):
+            row["cmc_url"] = override["cmc_url"]
+            row["assessment"]["cmc_url"] = override["cmc_url"]
     return request_dashboard_rows(requests, history) + rows
 
 
@@ -1651,24 +1689,25 @@ def find_assessment_for_request(request: dict[str, Any], history: list[dict[str,
         row_key = project_request_key(str(row.get("rootdata_url", "")), str(row.get("x_handle", "")))
         row_handle = str(row.get("x_handle", "")).strip().lstrip("@").lower()
         if request_key and request_key == row_key:
-            refreshed = refresh_assessment_market_state(row)
-            return apply_request_identity_override(refreshed, request)
+            return refresh_assessment_market_state(apply_request_identity_override(row, request))
         if request_handle and request_handle == row_handle:
-            refreshed = refresh_assessment_market_state(row)
-            return apply_request_identity_override(refreshed, request)
+            return refresh_assessment_market_state(apply_request_identity_override(row, request))
     return None
 
 
 def apply_request_identity_override(assessment: dict[str, Any], request: dict[str, Any]) -> dict[str, Any]:
     token_ticker = str(request.get("token_ticker") or "").strip()
     project_name = str(request.get("project_name") or "").strip()
-    if not token_ticker and not project_name:
+    cmc_url = str(request.get("cmc_url") or "").strip()
+    if not token_ticker and not project_name and not cmc_url:
         return assessment
     result = dict(assessment)
     if token_ticker:
         result["token_ticker"] = token_ticker
     if project_name:
         result["project_name"] = project_name
+    if cmc_url:
+        result["cmc_url"] = cmc_url
     return result
 
 
@@ -1731,40 +1770,48 @@ def handle_post_api(path: str, data: dict[str, Any]) -> tuple[int, dict[str, Any
     return 404, {"ok": False, "error": "not found"}
 
 
+def routed_request_path(raw_path: str) -> str:
+    parsed = urlparse(raw_path)
+    routed = str(parse_qs(parsed.query, keep_blank_values=True).get("__route", [""])[0]).strip()
+    if routed:
+        return f"/{unquote(routed).lstrip('/')}"
+    if parsed.path == "/api/index.py":
+        return "/"
+    return parsed.path
+
+
 class CryptoScoringHandler(BaseHTTPRequestHandler):
     server_version = "CryptoScoringWeb/0.1"
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path == "/api/health":
+        path = routed_request_path(self.path)
+        if path == "/api/health":
             self.send_json({"ok": True, "exchange_listings_db": exchange_listings_db_status()})
             return
-        if parsed.path == "/api/history":
+        if path == "/api/history":
             self.send_json(self.read_history())
             return
-        if parsed.path == "/api/requests":
+        if path == "/api/requests":
             self.send_json({"ok": True, "rows": read_github_requests()[-50:][::-1]})
             return
-        if parsed.path == "/api/request-status":
-            request_id = str(__import__("urllib.parse").parse.parse_qs(parsed.query).get("id", [""])[0])
+        if path == "/api/request-status":
+            request_id = str(parse_qs(parsed.query).get("id", [""])[0])
             self.send_json(request_status_payload(request_id), status=200 if request_id else 400)
             return
-        if parsed.path == "/api/dashboard":
+        if path == "/api/dashboard":
             history = read_history_rows()
             self.send_json({"ok": True, "rows": combined_dashboard_rows(history, read_github_requests())})
             return
-        self.serve_static(parsed.path)
+        self.serve_static(path)
 
     def do_POST(self) -> None:
-        parsed = urlparse(self.path)
-        if parsed.path not in {"/api/score", "/api/request", "/api/project/delete", "/api/exchange-listings/sync"}:
-            self.send_error(404)
-            return
+        path = routed_request_path(self.path)
         try:
             length = int(self.headers.get("content-length", "0"))
             raw = self.rfile.read(length).decode("utf-8")
             data = json.loads(raw or "{}")
-            status, result = handle_post_api(parsed.path, data)
+            status, result = handle_post_api(path, data)
             self.send_json(result, status=status)
         except Exception as exc:
             self.send_json({"ok": False, "error": str(exc)}, status=400)

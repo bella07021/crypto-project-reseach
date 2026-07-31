@@ -1,0 +1,10 @@
+.cmc-chrome-profile/
+.rootdata-chrome-profile/
+.x-chrome-profile/
+.tmp/
+outputs/
+tests/
+docs/
+launchd/
+logs/
+**/__pycache__/

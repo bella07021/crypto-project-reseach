@@ -23,27 +23,31 @@
         <header class="topbar" id="topbar">
           <div>
             <h1>加密项目调研评分</h1>
-            <p>输入 Token Symbol、项目名、X 链接和 RootData 链接，生成评分、TGE 判断和上线交易所跟踪。</p>
+            <p>输入 Token Symbol、项目名、X、RootData 和 CoinMarketCap 链接，生成评分、TGE 判断和上线交易所跟踪。</p>
           </div>
         </header>
 
         <section class="view active" id="addView">
           <form class="input-bar" id="scoreForm">
-            <label>
+            <label class="input-token">
               <span>Token Symbol</span>
               <input name="token_ticker" placeholder="NEX" required />
             </label>
-            <label>
+            <label class="input-project">
               <span>项目名</span>
               <input name="project_name" placeholder="Nexus" required />
             </label>
-            <label>
+            <label class="input-x">
               <span>X 链接</span>
               <input name="x_handle" placeholder="https://x.com/NexusLabs" required />
             </label>
-            <label>
+            <label class="input-rootdata">
               <span>RootData 链接</span>
               <input name="rootdata_url" placeholder="https://cn.rootdata.com/projects/detail/..." required />
+            </label>
+            <label class="input-cmc">
+              <span>CoinMarketCap 链接（可选）</span>
+              <input name="cmc_url" type="url" placeholder="https://coinmarketcap.com/currencies/..." />
             </label>
             <button type="submit" id="submitButton">开始更新评分</button>
           </form>
@@ -239,6 +243,6 @@
       </section>
     </template>
 
-    <script src="./app.js?v=20260626-investor-reason"></script>
+    <script src="./app.js?v=20260731-cmc-url"></script>
   </body>
 </html>

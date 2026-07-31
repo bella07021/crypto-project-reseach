@@ -33,6 +33,7 @@ def process_next_request() -> bool:
                 "project_name": request.get("project_name", ""),
                 "x_handle": request.get("x_handle", ""),
                 "rootdata_url": request.get("rootdata_url", ""),
+                "cmc_url": request.get("cmc_url", ""),
             }
         )
         assessment = result.get("assessment", {})
