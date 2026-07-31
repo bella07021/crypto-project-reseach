@@ -12,3 +12,10 @@ test("scoreReason describes ordinary named investors instead of saying none", ()
     "已识别 3 个投资方，未命中顶级/强机构",
   );
 });
+
+test("tgeSummary keeps an explicit TGE label when the date is unknown", () => {
+  assert.equal(
+    _private.tgeSummary({ tge_status: "已 TGE", tge_date: "" }),
+    "已 TGE（日期待确认）",
+  );
+});

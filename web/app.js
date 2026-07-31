@@ -556,7 +556,7 @@ function tgeSummary(row) {
     if (row.request_status === "processing") return "队列处理中";
     return "队列等待中";
   }
-  if (row.tge_status === "已 TGE") return row.tge_date || "--";
+  if (row.tge_status === "已 TGE") return row.tge_date || "已 TGE（日期待确认）";
   return "未 TGE";
 }
 
@@ -673,5 +673,5 @@ if (hasDocument) {
 }
 
 if (typeof module !== "undefined") {
-  module.exports = { _private: { scoreReason } };
+  module.exports = { _private: { scoreReason, tgeSummary } };
 }
